@@ -1,0 +1,33 @@
+{
+  "name": "Cloud SOC Terraform Environment",
+
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/docker-compose:1": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hashicorp.terraform",
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "github.vscode-pull-request-github"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "workbench.editorAssociations": {
+          "*.md": "vscode.markdown.preview"
+        }
+      }
+    }
+  },
+
+  "remoteUser": "root",
+
+  "postCreateCommand": "terraform --version && aws --version && python3 --version && docker --version"
+}
