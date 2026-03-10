@@ -18,6 +18,6 @@
       ]
     }
   },
-  "postCreateCommand": "pip install -U boto3 awsebcli && terraform -v && aws --version",
+  "postCreateCommand": "pip install -U boto3 awsebcli && (terraform -v || (apk add --no-cache terraform && terraform -v)) && aws --version",
   "remoteUser": "vscode"
 }
