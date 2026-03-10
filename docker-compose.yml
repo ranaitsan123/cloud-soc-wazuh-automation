@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+
+  devops:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+
+    container_name: soc-devops
+
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.aws:/root/.aws
+
+    working_dir: /workspace
+
+    tty: true
