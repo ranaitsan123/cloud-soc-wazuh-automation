@@ -1,6 +1,23 @@
 {
-	"image": "mcr.microsoft.com/devcontainers/universal:2",
-	"features": {
-		"ghcr.io/devcontainers/features/terraform:1": {}
-	}
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hashicorp.terraform",
+        "ms-azuretools.vscode-docker",
+        "amazonwebservices.aws-toolkit-vscode",
+        "ms-python.python"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install -U boto3 awsebcli && terraform -v && aws --version",
+  "remoteUser": "vscode"
 }
