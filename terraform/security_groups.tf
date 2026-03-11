@@ -54,3 +54,60 @@ resource "aws_security_group" "wazuh_sg" {
     Name = "wazuh-sg"
   }
 }
+
+resource "aws_security_group" "victim_sg" {
+  name        = "victim-sg"
+  description = "Victim instance security group"
+  vpc_id      = aws_vpc.wazuh_vpc.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH access for testing"
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP app traffic"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "victim-sg"
+  }
+}
+
+resource "aws_security_group" "jail_sg" {
+  name        = "jail-sg"
+  description = "Jail security group for isolated instances"
+  vpc_id      = aws_vpc.wazuh_vpc.id
+
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = []
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = []
+  }
+
+  tags = {
+    Name = "jail-sg"
+  }
+}

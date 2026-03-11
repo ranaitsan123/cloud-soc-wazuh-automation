@@ -18,6 +18,7 @@ resource "aws_instance" "wazuh_server" {
 
   user_data = <<-EOF
               #!/bin/bash -xe
+              sysctl -w vm.max_map_count=262144
               apt-get update -y
               apt-get install -y apt-transport-https ca-certificates curl software-properties-common git
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
@@ -50,5 +51,26 @@ resource "aws_instance" "wazuh_server" {
 
   tags = {
     Name = "wazuh-server"
+  }
+}
+
+resource "aws_instance" "victim_server" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.victim_sg.id]
+  associate_public_ip_address = true
+  key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
+
+  user_data = <<-EOF
+              #!/bin/bash -xe
+              apt-get update -y
+              apt-get install -y nginx wazuh-agent
+              systemctl enable nginx
+              systemctl start nginx
+              EOF
+
+  tags = {
+    Name = "victim-server"
   }
 }
