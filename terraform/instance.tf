@@ -30,20 +30,44 @@ resource "aws_instance" "wazuh_server" {
               chmod +x /usr/local/bin/docker-compose
               mkdir -p /opt/wazuh
               cat > /opt/wazuh/docker-compose.yml <<'EOD'
-              version: '3.17'
+              version: '3.9'
               services:
-                wazuh:
-                  image: wazuh/wazuh:5.0.2
+                wazuh-indexer:
+                  image: wazuh/wazuh-indexer:4.9.0
+                  environment:
+                    - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+                  ulimits:
+                    memlock:
+                      soft: -1
+                      hard: -1
+                  volumes:
+                    - wazuh_indexer_data:/var/lib/wazuh-indexer
+                  ports:
+                    - "9200:9200"
+
+                wazuh-manager:
+                  image: wazuh/wazuh-manager:4.9.0
+                  ports:
+                    - "1514:1514"
+                    - "1515:1515"
+                    - "55000:55000"
+                  volumes:
+                    - wazuh_manager_data:/var/ossec/data
+                    - /opt/wazuh/custom_scripts:/var/ossec/integration
+
+                wazuh-dashboard:
+                  image: wazuh/wazuh-dashboard:4.9.0
+                  environment:
+                    - WAZUH_INDEXER_URL=https://wazuh-indexer:9200
                   ports:
                     - "443:443"
-                    - "1514:1514/tcp"
-                    - "1515:1515/tcp"
-                    - "55000:55000/tcp"
-                  volumes:
-                    - wazuh_data:/var/ossec/data
-                    - /opt/wazuh/custom_scripts:/var/ossec/integration
+                  depends_on:
+                    - wazuh-indexer
+
               volumes:
-                wazuh_data:
+                wazuh_indexer_data:
+                  driver: local
+                wazuh_manager_data:
                   driver: local
               EOD
               cd /opt/wazuh && docker compose up -d
