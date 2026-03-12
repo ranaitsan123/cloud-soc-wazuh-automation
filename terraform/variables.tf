@@ -28,3 +28,9 @@ variable "allowed_ssh_cidr" {
   type    = string
   default = "0.0.0.0/0"
 }
+
+variable "prevent_destroy" {
+  type        = bool
+  description = "If true, resources are protected from destroy (use with caution)."
+  default     = false
+}

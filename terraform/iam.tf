@@ -11,11 +11,23 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 resource "aws_iam_role" "wazuh_ec2_role" {
   name               = "wazuh-ec2-role"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+
+  tags = {
+    Name      = "wazuh-ec2-role"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
 }
 
 resource "aws_iam_policy" "wazuh_ec2_policy" {
   name        = "wazuh-ec2-policy"
   description = "Permissions for Wazuh response automation"
+
+  tags = {
+    Name      = "wazuh-ec2-policy"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -48,4 +60,10 @@ resource "aws_iam_role_policy_attachment" "attach_wazuh_policy" {
 resource "aws_iam_instance_profile" "wazuh_instance_profile" {
   name = "wazuh-instance-profile"
   role = aws_iam_role.wazuh_ec2_role.name
+
+  tags = {
+    Name      = "wazuh-instance-profile"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
 }

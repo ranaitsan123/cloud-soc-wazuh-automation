@@ -5,7 +5,7 @@ services:
     image: wazuh/wazuh-indexer:4.9.0
     container_name: wazuh-indexer
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
     ulimits:
       memlock:
         soft: -1

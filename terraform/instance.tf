@@ -42,7 +42,7 @@ resource "aws_instance" "wazuh_server" {
                 wazuh-indexer:
                   image: wazuh/wazuh-indexer:4.9.0
                   environment:
-                    - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+                    - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
                   ulimits:
                     memlock:
                       soft: -1
@@ -81,7 +81,9 @@ resource "aws_instance" "wazuh_server" {
               EOF
 
   tags = {
-    Name = "wazuh-server"
+    Name      = "wazuh-server"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
   }
 }
 
@@ -96,12 +98,19 @@ resource "aws_instance" "victim_server" {
   user_data = <<-EOF
               #!/bin/bash -xe
               apt-get update -y
+              apt-get install -y apt-transport-https ca-certificates curl
+              curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | apt-key add -
+              echo "deb https://packages.wazuh.com/4.x/apt/ stable main" \
+                | tee /etc/apt/sources.list.d/wazuh.list
+              apt-get update -y
               apt-get install -y nginx wazuh-agent
               systemctl enable nginx
               systemctl start nginx
               EOF
 
   tags = {
-    Name = "victim-server"
+    Name      = "victim-server"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
   }
 }

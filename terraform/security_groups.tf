@@ -51,7 +51,9 @@ resource "aws_security_group" "wazuh_sg" {
   }
 
   tags = {
-    Name = "wazuh-sg"
+    Name      = "wazuh-sg"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
   }
 }
 
@@ -84,7 +86,9 @@ resource "aws_security_group" "victim_sg" {
   }
 
   tags = {
-    Name = "victim-sg"
+    Name      = "victim-sg"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
   }
 }
 
@@ -93,21 +97,13 @@ resource "aws_security_group" "jail_sg" {
   description = "Jail security group for isolated instances"
   vpc_id      = aws_vpc.wazuh_vpc.id
 
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = []
-  }
+  ingress = []
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = []
-  }
+  egress = []
 
   tags = {
-    Name = "jail-sg"
+    Name      = "jail-sg"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
   }
 }

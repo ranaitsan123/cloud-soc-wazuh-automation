@@ -13,3 +13,11 @@ output "wazuh_instance_id" {
 output "wazuh_instance_public_ip" {
   value = aws_instance.wazuh_server.public_ip
 }
+
+output "victim_instance_id" {
+  value = aws_instance.victim_server.id
+}
+
+output "victim_instance_ip" {
+  value = aws_instance.victim_server.public_ip
+}
