@@ -1,0 +1,17 @@
+[
+  {
+    "timestamp": "2026-03-13T00:00:00Z",
+    "change": "initial script creation",
+    "details": "Create terraform_safe_apply.sh with full import-check path and plan/apply/destroy behavior for all resources in repo."
+  },
+  {
+    "timestamp": "2026-03-13T00:00:00Z",
+    "change": "None ID guard",
+    "details": "Fix import_if_missing to skip AWS ID value 'None' and avoid InvalidInstanceID.Malformed errors."
+  },
+  {
+    "timestamp": "2026-03-13T00:00:00Z",
+    "change": "runtime changelog logging",
+    "details": "Add record_history() function with JSON append to terraform_safe_apply_history.json for start/success/error events and timeline tracking."
+  }
+]
