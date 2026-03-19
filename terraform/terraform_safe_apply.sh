@@ -97,6 +97,14 @@ find_route_table_association_id() {
   aws ec2 describe-route-tables --route-table-ids "$rt_id" --query "RouteTables[0].Associations[?SubnetId=='$subnet_id'].RouteTableAssociationId | [0]" --output text 2>/dev/null || true
 }
 
+find_route_table_association_import_id() {
+  local rt_id subnet_id
+  rt_id=$(find_route_table_id)
+  subnet_id=$(find_subnet_id)
+  [[ -z "$rt_id" || -z "$subnet_id" ]] && return 0
+  echo "$subnet_id/$rt_id"
+}
+
 find_security_group_id() {
   local name=$1
   aws ec2 describe-security-groups --filters Name=group-name,Values=$name Name=tag:Project,Values=${PROJECT_TAG} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true
@@ -142,7 +150,7 @@ import_if_missing aws_vpc.wazuh_vpc "$(find_vpc_id)"
 import_if_missing aws_internet_gateway.igw "$(find_igw_id)"
 import_if_missing aws_subnet.public "$(find_subnet_id)"
 import_if_missing aws_route_table.public "$(find_route_table_id)"
-import_if_missing aws_route_table_association.public "$(find_route_table_association_id)"
+import_if_missing aws_route_table_association.public "$(find_route_table_association_import_id)"
 
 import_if_missing aws_security_group.jail_sg "$(find_security_group_id jail-sg)"
 import_if_missing aws_security_group.victim_sg "$(find_security_group_id victim-sg)"
