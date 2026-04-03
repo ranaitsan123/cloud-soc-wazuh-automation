@@ -25,6 +25,10 @@ PROJECT_TAG="cloud-soc"
 COMMON_TAG_FILTER="Name=tag:Project,Values=${PROJECT_TAG}"
 HISTORY_FILE="terraform_safe_apply_history.json"
 
+# Resource names (match terraform vars in s3.tf, ecr.tf)
+S3_BUCKET_NAME="${S3_BUCKET_NAME:-cloud-soc-wazuh-assets}"
+ECR_REPOSITORY_NAME="${ECR_REPOSITORY_NAME:-cloud-soc-wazuh-repo}"
+
 ########################################
 # Helpers
 ########################################
@@ -125,6 +129,14 @@ find_iam_policy_arn() {
   aws iam list-policies --scope Local --query "Policies[?PolicyName=='$policy_name'].Arn | [0]" --output text 2>/dev/null || true
 }
 
+find_s3_bucket_name() {
+  echo "$S3_BUCKET_NAME"
+}
+
+find_ecr_repository_name() {
+  echo "$ECR_REPOSITORY_NAME"
+}
+
 find_instance_profile_name() {
   local instance_profile_name="wazuh-instance-profile"
   if aws iam get-instance-profile --instance-profile-name "$instance_profile_name" >/dev/null 2>&1; then
@@ -158,6 +170,9 @@ import_if_missing aws_security_group.wazuh_sg "$(find_security_group_id wazuh-sg
 
 import_if_missing aws_instance.wazuh_server "$(find_instance_id_by_name wazuh-server)"
 import_if_missing aws_instance.victim_server "$(find_instance_id_by_name victim-server)"
+
+import_if_missing aws_s3_bucket.wazuh_assets "$(find_s3_bucket_name)"
+import_if_missing aws_ecr_repository.wazuh_repo "$(find_ecr_repository_name)"
 
 import_if_missing aws_iam_role.wazuh_ec2_role "$(find_iam_role_arn | awk -F'/' '{print $NF}')"
 import_if_missing aws_iam_policy.wazuh_ec2_policy "$(find_iam_policy_arn)"

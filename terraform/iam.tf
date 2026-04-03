@@ -47,6 +47,36 @@ resource "aws_iam_policy" "wazuh_ec2_policy" {
         ]
         Effect   = "Allow"
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:ListBucketVersions",
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+          "s3:PutObjectVersionAcl"
+        ]
+        Resource = [
+          "arn:aws:s3:::cloud-soc-wazuh-assets",
+          "arn:aws:s3:::cloud-soc-wazuh-assets/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:DescribeRepositories",
+          "ecr:CreateRepository",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload"
+        ]
+        Resource = "*"
       }
     ]
   })

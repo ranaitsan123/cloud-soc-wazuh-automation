@@ -21,3 +21,11 @@ output "victim_instance_id" {
 output "victim_instance_ip" {
   value = aws_instance.victim_server.public_ip
 }
+
+output "s3_bucket_name" {
+  value = aws_s3_bucket.wazuh_assets.id
+}
+
+output "ecr_repository_url" {
+  value = aws_ecr_repository.wazuh_repo.repository_url
+}
