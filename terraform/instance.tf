@@ -40,7 +40,7 @@ resource "aws_instance" "wazuh_server" {
               version: '3.9'
               services:
                 wazuh-indexer:
-                  image: wazuh/wazuh-indexer:4.9.0
+                  image: wazuh/wazuh-indexer:4.14.4
                   environment:
                     - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
                   ulimits:
@@ -53,7 +53,9 @@ resource "aws_instance" "wazuh_server" {
                     - "9200:9200"
 
                 wazuh-manager:
-                  image: wazuh/wazuh-manager:4.9.0
+                  image: wazuh/wazuh-manager:4.14.4
+                  depends_on:
+                    - wazuh-indexer
                   ports:
                     - "1514:1514"
                     - "1515:1515"
@@ -63,13 +65,14 @@ resource "aws_instance" "wazuh_server" {
                     - /opt/wazuh/custom_scripts:/var/ossec/integration
 
                 wazuh-dashboard:
-                  image: wazuh/wazuh-dashboard:4.9.0
+                  image: wazuh/wazuh-dashboard:4.14.4
+                  depends_on:
+                    - wazuh-indexer
+                    - wazuh-manager
                   environment:
                     - WAZUH_INDEXER_URL=https://wazuh-indexer:9200
                   ports:
                     - "443:443"
-                  depends_on:
-                    - wazuh-indexer
 
               volumes:
                 wazuh_indexer_data:
