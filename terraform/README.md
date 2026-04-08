@@ -5,7 +5,7 @@ This repository contains the Terraform configuration for deploying a Cloud Secur
 ## Overview
 
 The infrastructure includes:
-- **VPC and Networking**: Isolated VPC with public subnets, internet gateway, and route tables.
+- **VPC and Networking**: Isolated VPC with public subnets, internet gateway, and route tables. The deployment script automatically handles VPC limits by reusing existing VPCs or cleaning up orphaned ones.
 - **Security Groups**: Separate groups for Wazuh server, victim VM, and jail (isolation) security group.
 - **EC2 Instances**: Wazuh server and victim server with IAM roles for automation.
 - **S3 Bucket**: Versioned storage for SOC assets (e.g., Docker Compose files, scripts).
@@ -15,6 +15,8 @@ The infrastructure includes:
 ## Features
 
 - **State-Aware Safe Apply**: The `terraform_safe_apply.sh` script automatically discovers and imports existing AWS resources to prevent duplicate creations, enabling safe redeployments even after Codespace timeouts.
+- **VPC Limit Management**: Automatically handles AWS VPC limits by reusing existing VPCs, cleaning up orphaned resources, and prompting for limit increases when needed.
+- **Security Group Conflict Resolution**: Automatically detects and resolves security group conflicts when importing VPCs from different environments.
 - **Versioning Support**:
   - S3 bucket with versioning enabled for rollback of configurations.
   - ECR repository with lifecycle policy to retain the last 3 images, ensuring cost-effective version management.
@@ -60,11 +62,118 @@ The script:
 - Imports existing resources if they exist in AWS but not in Terraform state.
 - Records deployment history in `terraform_safe_apply_history.json`.
 - Supports custom arguments via `--auto-approve` or other Terraform flags.
+- **Automatically handles AWS VPC limits** by reusing existing VPCs or cleaning up orphaned ones.
+- **Prompts for confirmation** before requesting VPC limit increases to avoid unexpected costs.
+- **Retries failed deployments** due to VPC limits after automatic cleanup.
+
+#### VPC Limit Management
+When VPC limits are reached (default: 5 VPCs per region), the script:
+1. **Reuses existing VPCs** with matching project tags (`Project=cloud-soc`)
+2. **Cleans up orphaned VPCs** that have no dependencies (subnets, IGWs, custom security groups)
+3. **Prompts for limit increase** if cleanup is insufficient
+4. **Resolves security group conflicts** automatically by importing existing groups or removing conflicting ones
+5. **Retries deployment** after successful cleanup
+
+#### Security Group Conflict Resolution
+The script automatically handles security group conflicts that can occur when importing VPCs:
+- **Detects existing security groups** in imported VPCs
+- **Imports compatible groups** instead of creating duplicates
+- **Removes conflicting groups** from state when VPC changes
+- **Prevents deployment failures** due to duplicate names
 
 Example:
 ```bash
 ./terraform_safe_apply.sh apply --auto-approve
 ```
+
+### Script Workflow Diagram
+
+The following diagram illustrates the complete workflow of the `terraform_safe_apply.sh` script:
+
+```mermaid
+graph TD
+    A["Start: terraform_safe_apply.sh"] --> B["Initialize Terraform"]
+    B --> C["Load .env variables"]
+    C --> D{"ACTION Type?"}
+    
+    D -->|plan| E["Check VPC Limits"]
+    D -->|apply| E
+    D -->|destroy| F["Run terraform destroy"]
+    D -->|other| G["Error: Unknown action"]
+    
+    E --> H{"VPC Limit<br/>Reached?"}
+    H -->|No| I["Find existing resources"]
+    H -->|Yes| J["Try to reuse<br/>existing VPC"]
+    
+    J --> K{"Existing VPC<br/>Found?"}
+    K -->|Yes| L["Import VPC"]
+    K -->|No| M["Clean up orphaned VPCs"]
+    
+    L --> I
+    M --> N{"Still at<br/>Limit?"}
+    N -->|Yes| O["Prompt user for<br/>limit increase"]
+    N -->|No| I
+    
+    O --> P{"User<br/>Approved?"}
+    P -->|Yes| Q["Request quota increase"]
+    P -->|No| R["Continue with current limit"]
+    
+    Q --> I
+    R --> I
+    
+    I --> S["Import VPC, IGW, Subnet<br/>Route Table, etc."]
+    S --> T["Check Security Group<br/>Conflicts"]
+    
+    T --> U{"Conflicts<br/>Found?"}
+    U -->|Yes| V["Remove conflicting SGs<br/>from state"]
+    U -->|No| W["Import Security Groups"]
+    
+    V --> W
+    W --> X["Import IAM, S3,<br/>and other resources"]
+    
+    X --> Y["Run terraform plan"]
+    
+    D -->|plan| Z["Save plan to tfplan"]
+    Z --> AA["Exit successfully"]
+    
+    D -->|apply| AB["Run terraform apply"]
+    AB --> AC{"Apply<br/>Successful?"}
+    
+    AC -->|Yes| AD["Record success"]
+    AD --> AE["Exit successfully"]
+    
+    AC -->|No| AF{"VPC Limit<br/>Error?"}
+    AF -->|Yes| AG["Clean up orphaned VPCs"]
+    AF -->|No| AH["Record failure"]
+    AH --> AI["Exit with error"]
+    
+    AG --> AJ["Re-import VPC"]
+    AJ --> AK["Retry terraform apply"]
+    AK --> AL{"Retry<br/>Successful?"}
+    
+    AL -->|Yes| AM["Record success"]
+    AM --> AE
+    AL -->|No| AN["Record failure"]
+    AN --> AI
+    
+    F --> AO["Run terraform destroy"]
+    AO --> AP["Record destroy"]
+    AP --> AE
+    
+    G --> AI
+    
+    style A fill:#e1f5e1
+    style AE fill:#e1f5e1
+    style AI fill:#ffe1e1
+    style F fill:#fff4e1
+    style G fill:#ffe1e1
+```
+
+**Diagram Legend:**
+- 🟢 **Green nodes**: Start and successful completion
+- 🔴 **Red nodes**: Errors or invalid actions
+- 🟡 **Yellow nodes**: Destruction operations
+- **Diamond nodes**: Decision points (if/else logic)
 
 ### Manual Terraform Commands
 
@@ -133,6 +242,8 @@ After deployment, key outputs include:
 - **Import Errors**: If resources exist in AWS but not in state, the script will attempt to import them. Check AWS console if imports fail.
 - **Permissions Issues**: Ensure AWS CLI is configured with sufficient permissions (e.g., EC2, S3, ECR, IAM).
 - **State Drift**: The safe apply script mitigates this by importing existing resources.
+- **VPC Limit Errors**: The script automatically handles VPC limits by reusing existing VPCs, cleaning up orphaned ones, and prompting for limit increases when needed.
+- **Security Group Conflicts**: The script automatically detects and resolves conflicts when importing VPCs with existing security groups.
 - **History Logs**: Check `terraform_safe_apply_history.json` for deployment status.
 
 ## Contributing

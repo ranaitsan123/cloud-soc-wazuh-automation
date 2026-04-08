@@ -111,6 +111,16 @@ find_route_table_association_import_id() {
 
 find_security_group_id() {
   local name=$1
+  # First try to find security groups in the current VPC (if VPC is already imported)
+  if stack_has aws_vpc.wazuh_vpc; then
+    local vpc_id
+    vpc_id=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+    if [[ -n "$vpc_id" ]]; then
+      aws ec2 describe-security-groups --filters Name=vpc-id,Values=$vpc_id Name=group-name,Values=$name --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true
+      return
+    fi
+  fi
+  # Fallback: find by name and project tag
   aws ec2 describe-security-groups --filters Name=group-name,Values=$name Name=tag:Project,Values=${PROJECT_TAG} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true
 }
 
@@ -152,17 +162,185 @@ find_role_policy_attachment_id() {
   aws iam list-attached-role-policies --role-name "$role_name" --query "AttachedPolicies[?PolicyArn=='$policy_arn'].PolicyArn | [0]" --output text 2>/dev/null || true
 }
 
+check_and_handle_vpc_limits() {
+  # Check current VPC count
+  local vpc_count
+  vpc_count=$(aws ec2 describe-vpcs --query 'length(Vpcs[?IsDefault==`false`])' --output text 2>/dev/null || echo "0")
+
+  # AWS default limit is 5 VPCs per region
+  local vpc_limit=5
+
+  if [[ "$vpc_count" -ge "$vpc_limit" ]]; then
+    echo_warn "VPC limit reached ($vpc_count/$vpc_limit). Attempting to reuse existing VPC..."
+
+    # Find an existing VPC that matches our project tags
+    local existing_vpc_id
+    existing_vpc_id=$(aws ec2 describe-vpcs \
+      --filters "Name=tag:Project,Values=${PROJECT_TAG}" "Name=tag:Name,Values=wazuh-vpc" \
+      --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
+
+    if [[ -n "$existing_vpc_id" && "$existing_vpc_id" != "None" ]]; then
+      echo_info "Found existing VPC: $existing_vpc_id"
+
+      # Check if VPC is already in Terraform state
+      if stack_has aws_vpc.wazuh_vpc; then
+        echo_info "VPC already in Terraform state, proceeding..."
+        return 0
+      fi
+
+      # Import the existing VPC
+      echo_info "Importing existing VPC..."
+      terraform import aws_vpc.wazuh_vpc "$existing_vpc_id" || {
+        echo_warn "Failed to import VPC, will try to clean up orphaned VPCs..."
+        cleanup_orphaned_vpcs
+      }
+    else
+      echo_warn "No suitable existing VPC found, attempting to clean up orphaned VPCs..."
+      cleanup_orphaned_vpcs
+    fi
+  fi
+}
+
+check_and_resolve_security_group_conflicts() {
+  # Check if VPC is imported and get its ID
+  if stack_has aws_vpc.wazuh_vpc; then
+    local vpc_id
+    vpc_id=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+    if [[ -n "$vpc_id" ]]; then
+      echo_info "Checking for security group conflicts in VPC: $vpc_id"
+
+      # Check each security group
+      local sg_names=("jail-sg" "victim-sg" "wazuh-sg")
+      local conflicts_found=false
+
+      for sg_name in "${sg_names[@]}"; do
+        # Check if security group exists in the target VPC
+        local existing_sg_id
+        existing_sg_id=$(aws ec2 describe-security-groups \
+          --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=$sg_name" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "None")
+
+        if [[ "$existing_sg_id" != "None" && -n "$existing_sg_id" ]]; then
+          echo_info "Found existing security group $sg_name ($existing_sg_id) in target VPC"
+
+          # Check if it's already in Terraform state
+          local tf_resource="aws_security_group.${sg_name%'-sg'}_sg"
+          if stack_has "$tf_resource"; then
+            # Get current security group VPC
+            local current_vpc
+            current_vpc=$(aws ec2 describe-security-groups \
+              --group-ids "$existing_sg_id" \
+              --query 'SecurityGroups[0].VpcId' --output text 2>/dev/null || echo "")
+
+            if [[ "$current_vpc" != "$vpc_id" ]]; then
+              echo_warn "Security group $sg_name is in different VPC ($current_vpc vs $vpc_id). Removing from state..."
+              terraform state rm "$tf_resource"
+              conflicts_found=true
+            fi
+          else
+            # Import the existing security group
+            echo_info "Importing existing security group $sg_name..."
+            import_if_missing "$tf_resource" "$existing_sg_id"
+          fi
+        fi
+      done
+
+      if [[ "$conflicts_found" == "true" ]]; then
+        echo_info "Security group conflicts resolved. Re-running plan..."
+        return 1  # Signal that we need to re-run the plan
+      fi
+    fi
+  fi
+  return 0
+}
+
+cleanup_orphaned_vpcs() {
+  echo_info "Looking for orphaned VPCs to clean up..."
+
+  # Find VPCs with our project tag but no associated resources
+  local orphaned_vpcs
+  orphaned_vpcs=$(aws ec2 describe-vpcs \
+    --filters "Name=tag:Project,Values=${PROJECT_TAG}" \
+    --query 'Vpcs[?length(Associations)==`0`].VpcId' --output text 2>/dev/null || true)
+
+  for vpc_id in $orphaned_vpcs; do
+    if [[ "$vpc_id" != "None" && -n "$vpc_id" ]]; then
+      echo_info "Attempting to delete orphaned VPC: $vpc_id"
+
+      # Check if VPC has any dependencies
+      local subnet_count igw_count sg_count
+      subnet_count=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'length(Subnets)' --output text 2>/dev/null || echo "0")
+      igw_count=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'length(InternetGateways)' --output text 2>/dev/null || echo "0")
+      sg_count=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=[\"default\"]" --query 'length(SecurityGroups)' --output text 2>/dev/null || echo "1")
+
+      if [[ "$subnet_count" == "0" && "$igw_count" == "0" && "$sg_count" == "1" ]]; then
+        # VPC appears to be empty (only default security group)
+        echo_info "Deleting empty VPC: $vpc_id"
+        aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null && echo_info "Successfully deleted VPC: $vpc_id" || echo_warn "Failed to delete VPC: $vpc_id"
+      else
+        echo_warn "VPC $vpc_id has dependencies (subnets: $subnet_count, IGWs: $igw_count), skipping..."
+      fi
+    fi
+  done
+
+  # If still no space, try to request limit increase
+  local vpc_count_after_cleanup
+  vpc_count_after_cleanup=$(aws ec2 describe-vpcs --query 'length(Vpcs[?IsDefault==`false`])' --output text 2>/dev/null || echo "0")
+
+  if [[ "$vpc_count_after_cleanup" -ge "5" ]]; then
+    echo_warn "Still at VPC limit after cleanup. Attempting to request limit increase..."
+    request_vpc_limit_increase
+  fi
+}
+
+request_vpc_limit_increase() {
+  echo_warn "VPC limit reached. Requesting an increase to 10 VPCs may incur additional costs."
+  echo_warn "This request may require manual approval from AWS."
+
+  # Prompt user for confirmation
+  read -p "Do you want to request a VPC limit increase to 10? (y/N): " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo_info "VPC limit increase request cancelled by user."
+    return 1
+  fi
+
+  echo_info "Requesting VPC limit increase to 10..."
+
+  # Try to request a limit increase (this may not work for all accounts)
+  if aws service-quotas request-service-quota-increase \
+    --service-code vpc \
+    --quota-code L-F678F1CE \
+    --desired-value 10 \
+    --region "$AWS_DEFAULT_REGION" 2>/dev/null; then
+    echo_info "✅ VPC limit increase request submitted successfully."
+    echo_info "📋 Check AWS Service Quotas console for approval status."
+    echo_info "⏱️  This may take some time to be approved."
+  else
+    echo_warn "❌ Failed to request VPC limit increase automatically."
+    echo_warn "💡 Please request it manually in the AWS Service Quotas console:"
+    echo_warn "   https://console.aws.amazon.com/servicequotas/"
+    return 1
+  fi
+}
+
 ########################################
 # Import existing resources in AWS if not in Terraform state
 ########################################
 
 echo_info "Checking and importing possibly existing resources..."
 
+# Handle VPC limits before attempting to create/import VPC
+check_and_handle_vpc_limits
+
 import_if_missing aws_vpc.wazuh_vpc "$(find_vpc_id)"
 import_if_missing aws_internet_gateway.igw "$(find_igw_id)"
 import_if_missing aws_subnet.public "$(find_subnet_id)"
 import_if_missing aws_route_table.public "$(find_route_table_id)"
 import_if_missing aws_route_table_association.public "$(find_route_table_association_import_id)"
+
+# Check for security group conflicts before importing them
+check_and_resolve_security_group_conflicts
 
 import_if_missing aws_security_group.jail_sg "$(find_security_group_id jail-sg)"
 import_if_missing aws_security_group.victim_sg "$(find_security_group_id victim-sg)"
@@ -172,7 +350,8 @@ import_if_missing aws_instance.wazuh_server "$(find_instance_id_by_name wazuh-se
 import_if_missing aws_instance.victim_server "$(find_instance_id_by_name victim-server)"
 
 import_if_missing aws_s3_bucket.wazuh_assets "$(find_s3_bucket_name)"
-import_if_missing aws_ecr_repository.wazuh_repo "$(find_ecr_repository_name)"
+# ECR import commented out - ECR resources are disabled for now
+# import_if_missing aws_ecr_repository.wazuh_repo "$(find_ecr_repository_name)"
 
 import_if_missing aws_iam_role.wazuh_ec2_role "$(find_iam_role_arn | awk -F'/' '{print $NF}')"
 import_if_missing aws_iam_policy.wazuh_ec2_policy "$(find_iam_policy_arn)"
@@ -196,10 +375,50 @@ if [[ "$ACTION" == "plan" ]]; then
   record_history "success" "plan complete"
   exit 0
 elif [[ "$ACTION" == "apply" ]]; then
+  # Check for security group conflicts before planning
+  if check_and_resolve_security_group_conflicts; then
+    echo_info "No security group conflicts detected, proceeding..."
+  else
+    echo_info "Security group conflicts resolved, re-planning..."
+  fi
+
   terraform plan -out=tfplan "${EXTRA_ARGS[@]}"
-  terraform apply -auto-approve tfplan
-  record_history "success" "apply complete"
-  exit 0
+
+  # Attempt apply with error handling for VPC limits
+  if terraform apply -auto-approve tfplan 2>&1; then
+    record_history "success" "apply complete"
+    exit 0
+  else
+    apply_exit_code=$?
+    apply_output=$(terraform apply -auto-approve tfplan 2>&1 || true)
+
+    # Check if the error is VPC limit exceeded
+    if echo "$apply_output" | grep -q "VpcLimitExceeded"; then
+      echo_warn "VPC limit exceeded during apply. Attempting automatic cleanup and retry..."
+
+      # Clean up orphaned VPCs
+      cleanup_orphaned_vpcs
+
+      # Re-run the import process
+      echo_info "Re-running import process after cleanup..."
+      check_and_handle_vpc_limits
+      import_if_missing aws_vpc.wazuh_vpc "$(find_vpc_id)"
+
+      # Retry apply
+      echo_info "Retrying terraform apply..."
+      if terraform apply -auto-approve tfplan; then
+        record_history "success" "apply complete (after VPC cleanup)"
+        exit 0
+      else
+        record_history "error" "apply failed even after VPC cleanup"
+        exit $apply_exit_code
+      fi
+    else
+      # Not a VPC limit error, just record the failure
+      record_history "error" "apply failed: $apply_output"
+      exit $apply_exit_code
+    fi
+  fi
 elif [[ "$ACTION" == "destroy" ]]; then
   terraform destroy "${EXTRA_ARGS[@]}"
   record_history "success" "destroy complete"
