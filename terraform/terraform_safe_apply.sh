@@ -324,6 +324,73 @@ request_vpc_limit_increase() {
   fi
 }
 
+handle_destroy_with_s3_protection() {
+  echo ""
+  echo "============================================"
+  echo "S3 Bucket Protection"
+  echo "============================================"
+  echo ""
+  echo "The S3 bucket 'cloud-soc-wazuh-assets' has lifecycle.prevent_destroy enabled."
+  echo ""
+  echo "Choose what to destroy:"
+  echo "  1) Everything EXCEPT the S3 bucket (recommended)"
+  echo "  2) Everything INCLUDING the S3 bucket"
+  echo "  3) Cancel destroy"
+  echo ""
+  read -p "Enter your choice (1-3): " -r choice
+
+  case "$choice" in
+    1)
+      echo_info "Destroying all resources except S3 bucket..."
+      terraform destroy \
+        -target=aws_instance.wazuh_server \
+        -target=aws_instance.victim_server \
+        -target=aws_security_group.wazuh_sg \
+        -target=aws_security_group.victim_sg \
+        -target=aws_security_group.jail_sg \
+        -target=aws_route_table_association.public \
+        -target=aws_route_table.public \
+        -target=aws_internet_gateway.igw \
+        -target=aws_subnet.public \
+        -target=aws_vpc.wazuh_vpc \
+        -target=aws_iam_instance_profile.wazuh_instance_profile \
+        -target=aws_iam_role_policy_attachment.attach_wazuh_policy \
+        -target=aws_iam_role.wazuh_ec2_role \
+        "${EXTRA_ARGS[@]}"
+      record_history "success" "destroy complete (S3 preserved)"
+      echo_info "✅ Destroy complete. S3 bucket 'cloud-soc-wazuh-assets' was preserved."
+      ;;
+    2)
+      echo_warn "⚠️  You selected to destroy EVERYTHING including the S3 bucket."
+      echo_warn "⚠️  This will delete all Wazuh Docker assets stored in S3."
+      read -p "Are you SURE? Type 'yes' to confirm: " -r confirm
+      if [[ "$confirm" == "yes" ]]; then
+        echo_info "Removing prevent_destroy protection from S3 bucket..."
+        sed -i.bak 's/prevent_destroy = true/prevent_destroy = false/' s3.tf
+        echo_info "Destroying all resources including S3 bucket..."
+        terraform destroy "${EXTRA_ARGS[@]}"
+        record_history "success" "destroy complete (S3 destroyed)"
+        echo_info "✅ Destroy complete. All resources including S3 bucket have been removed."
+        echo_info "💾 Backup created: s3.tf.bak"
+        echo_info "⚠️  Remember to restore prevent_destroy = true if you plan to rebuild."
+      else
+        echo_info "Destroy cancelled."
+        record_history "cancelled" "user cancelled full destroy"
+      fi
+      ;;
+    3)
+      echo_info "Destroy cancelled."
+      record_history "cancelled" "user cancelled destroy operation"
+      exit 0
+      ;;
+    *)
+      echo_warn "Invalid choice. Aborting destroy."
+      record_history "error" "invalid destroy choice"
+      exit 1
+      ;;
+  esac
+}
+
 ########################################
 # Import existing resources in AWS if not in Terraform state
 ########################################
@@ -420,8 +487,7 @@ elif [[ "$ACTION" == "apply" ]]; then
     fi
   fi
 elif [[ "$ACTION" == "destroy" ]]; then
-  terraform destroy "${EXTRA_ARGS[@]}"
-  record_history "success" "destroy complete"
+  handle_destroy_with_s3_protection
   exit 0
 else
   echo_warn "Unknown action: $ACTION. Allowed: plan | apply | destroy"

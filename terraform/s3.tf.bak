@@ -14,7 +14,7 @@ resource "aws_s3_bucket" "wazuh_assets" {
   }
 
   lifecycle {
-    prevent_destroy = false
+    prevent_destroy = true
   }
 }
 

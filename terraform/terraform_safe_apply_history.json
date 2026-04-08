@@ -22,3 +22,6 @@
 {"timestamp": "2026-04-08T15:18:49Z", "action": "apply", "status": "error", "message": "terraform_safe_apply.sh failed"}
 {"timestamp": "2026-04-08T15:24:16Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-04-08T15:25:44Z", "action": "apply", "status": "success", "message": "apply complete"}
+{"timestamp": "2026-04-08T15:41:06Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-08T15:42:09Z", "action": "destroy", "status": "error", "message": "terraform_safe_apply.sh failed"}
+{"timestamp": "2026-04-08T15:49:55Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
