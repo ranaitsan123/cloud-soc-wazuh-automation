@@ -324,6 +324,33 @@ request_vpc_limit_increase() {
   fi
 }
 
+empty_s3_bucket() {
+  local bucket_name="$1"
+  echo_info "Emptying S3 bucket: $bucket_name"
+  
+  # Delete all object versions
+  echo_info "Deleting all object versions..."
+  aws s3api list-object-versions --bucket "$bucket_name" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output text | \
+  while read -r key version_id; do
+    if [[ -n "$key" && -n "$version_id" ]]; then
+      echo_info "Deleting: $key (version: $version_id)"
+      aws s3api delete-object --bucket "$bucket_name" --key "$key" --version-id "$version_id" >/dev/null 2>&1
+    fi
+  done
+
+  # Delete all delete markers
+  echo_info "Deleting all delete markers..."
+  aws s3api list-object-versions --bucket "$bucket_name" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output text | \
+  while read -r key version_id; do
+    if [[ -n "$key" && -n "$version_id" ]]; then
+      echo_info "Removing delete marker: $key (version: $version_id)"
+      aws s3api delete-object --bucket "$bucket_name" --key "$key" --version-id "$version_id" >/dev/null 2>&1
+    fi
+  done
+
+  echo_info "✅ S3 bucket emptied successfully"
+}
+
 handle_destroy_with_s3_protection() {
   echo ""
   echo "============================================"
@@ -367,8 +394,13 @@ handle_destroy_with_s3_protection() {
       if [[ "$confirm" == "yes" ]]; then
         echo_info "Removing prevent_destroy protection from S3 bucket..."
         sed -i.bak 's/prevent_destroy = true/prevent_destroy = false/' s3.tf
+        
+        echo_info "Emptying S3 bucket before destruction..."
+        empty_s3_bucket "$S3_BUCKET_NAME"
+        
         echo_info "Destroying all resources including S3 bucket..."
         terraform destroy "${EXTRA_ARGS[@]}"
+        
         record_history "success" "destroy complete (S3 destroyed)"
         echo_info "✅ Destroy complete. All resources including S3 bucket have been removed."
         echo_info "💾 Backup created: s3.tf.bak"
