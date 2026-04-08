@@ -88,7 +88,7 @@ Example:
 
 ### Script Workflow Diagram
 
-The following diagram illustrates the complete workflow of the `terraform_safe_apply.sh` script:
+The following diagram illustrates the complete workflow of the `terraform_safe_apply.sh` script, including all resource types:
 
 ```mermaid
 graph TD
@@ -96,10 +96,14 @@ graph TD
     B --> C["Load .env variables"]
     C --> D{"ACTION Type?"}
     
-    D -->|plan| E["Check VPC Limits"]
-    D -->|apply| E
+    D -->|plan/apply| E["Check VPC Limits"]
     D -->|destroy| F["Run terraform destroy"]
     D -->|other| G["Error: Unknown action"]
+    
+    F --> AO["Record destroy"]
+    AO --> AA["Exit successfully"]
+    
+    G --> AI["Exit with error"]
     
     E --> H{"VPC Limit<br/>Reached?"}
     H -->|No| I["Find existing resources"]
@@ -116,64 +120,102 @@ graph TD
     
     O --> P{"User<br/>Approved?"}
     P -->|Yes| Q["Request quota increase"]
-    P -->|No| R["Continue with current limit"]
+    P -->|No| I
     
     Q --> I
-    R --> I
     
-    I --> S["Import VPC, IGW, Subnet<br/>Route Table, etc."]
-    S --> T["Check Security Group<br/>Conflicts"]
+    I --> S1["Import Networking<br/>Resources"]
+    S1 --> S1A["Import VPC"]
+    S1A --> S1B["Import IGW"]
+    S1B --> S1C["Import Subnet"]
+    S1C --> S1D["Import Route Table"]
+    S1D --> S1E["Import Route Table Association"]
     
-    T --> U{"Conflicts<br/>Found?"}
+    S1E --> S2["Check Security Group<br/>Conflicts"]
+    
+    S2 --> U{"Conflicts<br/>Found?"}
     U -->|Yes| V["Remove conflicting SGs<br/>from state"]
     U -->|No| W["Import Security Groups"]
     
     V --> W
-    W --> X["Import IAM, S3,<br/>and other resources"]
+    W --> W1["Import Jail SG"]
+    W1 --> W2["Import Victim SG"]
+    W2 --> W3["Import Wazuh SG"]
     
-    X --> Y["Run terraform plan"]
+    W3 --> S3["Import IAM Resources"]
+    S3 --> S3A["Import IAM Role"]
+    S3A --> S3B["Import IAM Policy"]
+    S3B --> S3C["Import Instance Profile"]
+    S3C --> S3D["Import Role Policy Attachment"]
+    
+    S3D --> S4["Import Storage Resources"]
+    S4 --> S4A["Import S3 Bucket"]
+    S4A --> S4B["Import S3 Versioning"]
+    S4B --> S4C["Import S3 Encryption Config"]
+    S4C --> S4D["Import S3 Public Access Block"]
+    S4D --> S4E["Import S3 Objects<br/>Wazuh Docker Files"]
+    
+    S4E --> S5["Import EC2 Instances"]
+    S5 --> S5A["Find Wazuh Server"]
+    S5A --> S5B["Find Victim Server"]
+    S5B --> S5C["Import if exists<br/>or create new"]
+    
+    S5C --> Y["Run terraform plan"]
     
     D -->|plan| Z["Save plan to tfplan"]
-    Z --> AA["Exit successfully"]
+    Z --> AA
     
-    D -->|apply| AB["Run terraform apply"]
+    D -->|apply| Y
+    Y --> AB["Run terraform apply"]
     AB --> AC{"Apply<br/>Successful?"}
     
-    AC -->|Yes| AD["Record success"]
-    AD --> AE["Exit successfully"]
+    AC -->|Yes| AD["Record success<br/>in history"]
+    AD --> AA
     
     AC -->|No| AF{"VPC Limit<br/>Error?"}
     AF -->|Yes| AG["Clean up orphaned VPCs"]
-    AF -->|No| AH["Record failure"]
-    AH --> AI["Exit with error"]
+    AF -->|No| AH["Record failure<br/>in history"]
+    AH --> AI
     
-    AG --> AJ["Re-import VPC"]
+    AG --> AJ["Re-import resources"]
     AJ --> AK["Retry terraform apply"]
     AK --> AL{"Retry<br/>Successful?"}
     
-    AL -->|Yes| AM["Record success"]
-    AM --> AE
-    AL -->|No| AN["Record failure"]
+    AL -->|Yes| AM["Record success<br/>after retry"]
+    AM --> AA
+    AL -->|No| AN["Record failure<br/>after retry"]
     AN --> AI
     
-    F --> AO["Run terraform destroy"]
-    AO --> AP["Record destroy"]
-    AP --> AE
-    
-    G --> AI
-    
     style A fill:#e1f5e1
-    style AE fill:#e1f5e1
+    style AA fill:#e1f5e1
     style AI fill:#ffe1e1
     style F fill:#fff4e1
     style G fill:#ffe1e1
+    style S1 fill:#e3f2fd
+    style S2 fill:#fff3e0
+    style S3 fill:#f3e5f5
+    style S4 fill:#e0f2f1
+    style S5 fill:#fce4ec
+    style AB fill:#c8e6c9
+    style AC fill:#ffccbc
 ```
 
 **Diagram Legend:**
 - 🟢 **Green nodes**: Start and successful completion
 - 🔴 **Red nodes**: Errors or invalid actions
 - 🟡 **Yellow nodes**: Destruction operations
-- **Diamond nodes**: Decision points (if/else logic)
+- 🔵 **Blue nodes**: Networking resources
+- 🟠 **Orange nodes**: Security/conflict resolution
+- 🟣 **Purple nodes**: IAM resources
+- 🟦 **Teal nodes**: Storage resources
+- 🩷 **Pink nodes**: EC2 instances
+
+**Resource Categories:**
+1. **Networking**: VPC, IGW, Subnet, Route Table, Route Table Association
+2. **Security**: Security Groups (Jail, Victim, Wazuh)
+3. **IAM**: Role, Policy, Instance Profile, Role Policy Attachment
+4. **Storage**: S3 Bucket, Versioning, Encryption, Public Access Block, S3 Objects
+5. **Compute**: EC2 Instances (Wazuh Server, Victim Server)
 
 ### Manual Terraform Commands
 
