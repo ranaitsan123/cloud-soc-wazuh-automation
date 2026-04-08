@@ -59,8 +59,8 @@ resource "aws_iam_policy" "wazuh_ec2_policy" {
           "s3:PutObjectVersionAcl"
         ]
         Resource = [
-          "arn:aws:s3:::cloud-soc-wazuh-assets",
-          "arn:aws:s3:::cloud-soc-wazuh-assets/*"
+          "arn:aws:s3:::${var.s3_bucket_name}",
+          "arn:aws:s3:::${var.s3_bucket_name}/*"
         ]
       },
       {

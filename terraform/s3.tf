@@ -44,3 +44,109 @@ resource "aws_s3_bucket_public_access_block" "wazuh_assets" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+# Upload wazuh-docker files to S3
+resource "aws_s3_object" "wazuh_docker_compose" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/docker-compose.yml"
+  source = "${path.module}/../wazuh-docker/docker-compose.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/docker-compose.yml")
+
+  tags = {
+    Name      = "wazuh-docker-compose"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_certs_generator" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/generate-indexer-certs.yml"
+  source = "${path.module}/../wazuh-docker/generate-indexer-certs.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/generate-indexer-certs.yml")
+
+  tags = {
+    Name      = "wazuh-certs-generator"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+# Upload config files
+resource "aws_s3_object" "wazuh_config_certs" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/certs.yml"
+  source = "${path.module}/../wazuh-docker/config/certs.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/certs.yml")
+
+  tags = {
+    Name      = "wazuh-config-certs"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_manager_conf" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/wazuh_cluster/wazuh_manager.conf"
+  source = "${path.module}/../wazuh-docker/config/wazuh_cluster/wazuh_manager.conf"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/wazuh_cluster/wazuh_manager.conf")
+
+  tags = {
+    Name      = "wazuh-manager-conf"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_indexer_config" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml"
+  source = "${path.module}/../wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml")
+
+  tags = {
+    Name      = "wazuh-indexer-config"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_indexer_users" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/wazuh_indexer/internal_users.yml"
+  source = "${path.module}/../wazuh-docker/config/wazuh_indexer/internal_users.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/wazuh_indexer/internal_users.yml")
+
+  tags = {
+    Name      = "wazuh-indexer-users"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_dashboard_config" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml"
+  source = "${path.module}/../wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml")
+
+  tags = {
+    Name      = "wazuh-dashboard-config"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_s3_object" "wazuh_dashboard_wazuh_yml" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "wazuh-docker/config/wazuh_dashboard/wazuh.yml"
+  source = "${path.module}/../wazuh-docker/config/wazuh_dashboard/wazuh.yml"
+  etag   = filemd5("${path.module}/../wazuh-docker/config/wazuh_dashboard/wazuh.yml")
+
+  tags = {
+    Name      = "wazuh-dashboard-wazuh-config"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}

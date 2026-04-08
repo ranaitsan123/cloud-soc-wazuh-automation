@@ -103,7 +103,7 @@ terraform destroy
 - **Name**: `cloud-soc-wazuh-repo` (configurable via `ecr_repository_name` variable).
 - **Lifecycle Policy**: Retains last 3 images; deletes older ones to manage costs.
 - **Mutability**: Tags are mutable for easy updates.
-- **Docker SOC Integration**: The repository can store re-tagged Wazuh images used by `docker-soc/docker-compose.yml` via environment variables.
+- **Wazuh Docker Integration**: The S3 bucket stores Wazuh docker configuration files from `wazuh-docker/` directory, which are deployed to EC2.
 
 ### IAM Permissions
 - **EC2 Role**: `wazuh-ec2-role` with permissions for:

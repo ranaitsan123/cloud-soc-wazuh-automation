@@ -26,6 +26,7 @@ output "s3_bucket_name" {
   value = aws_s3_bucket.wazuh_assets.id
 }
 
-output "ecr_repository_url" {
-  value = aws_ecr_repository.wazuh_repo.repository_url
-}
+# ECR output commented out as ECR is disabled for now
+# output "ecr_repository_url" {
+#   value = aws_ecr_repository.wazuh_repo.repository_url
+# }

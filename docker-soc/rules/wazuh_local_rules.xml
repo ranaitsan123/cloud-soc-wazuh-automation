@@ -1,8 +1,0 @@
-<group name="wazuh">
-  <rule id="100100" level="12">
-    <if_sid>100001</if_sid>
-    <description>High severity threat detected - execute isolate VM script</description>
-    <options>no_full_log</options>
-    <command>isolate-ec2</command>
-  </rule>
-</group>

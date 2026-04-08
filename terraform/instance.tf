@@ -23,65 +23,98 @@ resource "aws_instance" "wazuh_server" {
   iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
   key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
-  user_data = <<-EOF
-              #!/bin/bash -xe
-              sysctl -w vm.max_map_count=262144
-              apt-get update -y
-              apt-get install -y apt-transport-https ca-certificates curl software-properties-common git
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
-              echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
-              apt-get update -y
-              apt-get install -y docker-ce docker-ce-cli containerd.io
-              usermod -aG docker ubuntu
-              curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              chmod +x /usr/local/bin/docker-compose
-              mkdir -p /opt/wazuh
-              cat > /opt/wazuh/docker-compose.yml <<'EOD'
-              version: '3.9'
-              services:
-                wazuh-indexer:
-                  image: wazuh/wazuh-indexer:4.14.4
-                  environment:
-                    - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
-                  ulimits:
-                    memlock:
-                      soft: -1
-                      hard: -1
-                  volumes:
-                    - wazuh_indexer_data:/var/lib/wazuh-indexer
-                  ports:
-                    - "9200:9200"
+  depends_on = [
+    aws_s3_object.wazuh_docker_compose,
+    aws_s3_object.wazuh_certs_generator,
+    aws_s3_object.wazuh_config_certs,
+    aws_s3_object.wazuh_manager_conf,
+    aws_s3_object.wazuh_indexer_config,
+    aws_s3_object.wazuh_indexer_users,
+    aws_s3_object.wazuh_dashboard_config,
+    aws_s3_object.wazuh_dashboard_wazuh_yml
+  ]
 
-                wazuh-manager:
-                  image: wazuh/wazuh-manager:4.14.4
-                  depends_on:
-                    - wazuh-indexer
-                  ports:
-                    - "1514:1514"
-                    - "1515:1515"
-                    - "55000:55000"
-                  volumes:
-                    - wazuh_manager_data:/var/ossec/data
-                    - /opt/wazuh/custom_scripts:/var/ossec/integration
+  user_data = base64encode(<<-EOF
+#!/bin/bash
+set -e
 
-                wazuh-dashboard:
-                  image: wazuh/wazuh-dashboard:4.14.4
-                  depends_on:
-                    - wazuh-indexer
-                    - wazuh-manager
-                  environment:
-                    - WAZUH_INDEXER_URL=https://wazuh-indexer:9200
-                  ports:
-                    - "443:443"
+# Enable error logging
+exec > >(tee /var/log/wazuh-init.log)
+exec 2>&1
 
-              volumes:
-                wazuh_indexer_data:
-                  driver: local
-                wazuh_manager_data:
-                  driver: local
-              EOD
-              cd /opt/wazuh && docker compose up -d
-              EOF
+echo "[$(date)] Starting Wazuh server initialization..."
+
+# System configuration
+sysctl -w vm.max_map_count=262144
+
+# Update package list
+apt-get update -y
+
+# Install dependencies
+apt-get install -y \
+  apt-transport-https \
+  ca-certificates \
+  curl \
+  software-properties-common \
+  git \
+  awscli
+
+# Install Docker
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io
+usermod -aG docker ubuntu
+
+# Install Docker Compose
+curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+# Create wazuh directory structure
+mkdir -p /opt/wazuh/{config,custom_scripts}
+
+# Download files from S3
+echo "[$(date)] Downloading wazuh-docker files from S3..."
+S3_BUCKET="${var.s3_bucket_name}"
+S3_PREFIX="wazuh-docker"
+
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/docker-compose.yml" /opt/wazuh/docker-compose.yml
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/generate-indexer-certs.yml" /opt/wazuh/generate-indexer-certs.yml
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/certs.yml" /opt/wazuh/config/certs.yml
+
+# Download config files
+mkdir -p /opt/wazuh/config/{wazuh_cluster,wazuh_indexer,wazuh_dashboard,wazuh_indexer_ssl_certs}
+
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/wazuh_cluster/wazuh_manager.conf" /opt/wazuh/config/wazuh_cluster/wazuh_manager.conf
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/wazuh_indexer/wazuh.indexer.yml" /opt/wazuh/config/wazuh_indexer/wazuh.indexer.yml
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/wazuh_indexer/internal_users.yml" /opt/wazuh/config/wazuh_indexer/internal_users.yml
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/wazuh_dashboard/opensearch_dashboards.yml" /opt/wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+aws s3 cp "s3://$${S3_BUCKET}/$${S3_PREFIX}/config/wazuh_dashboard/wazuh.yml" /opt/wazuh/config/wazuh_dashboard/wazuh.yml
+
+# Generate certificates ONLY if they don't already exist
+CERTS_DIR="/opt/wazuh/config/wazuh_indexer_ssl_certs"
+if [ ! -d "$CERTS_DIR" ] || [ -z "$(ls -A $CERTS_DIR 2>/dev/null)" ]; then
+  echo "[$(date)] Certificate directory is empty or missing. Generating certificates..."
+  mkdir -p "$CERTS_DIR"
+  cd /opt/wazuh
+  docker compose -f generate-indexer-certs.yml run --rm generator
+  echo "[$(date)] Certificates generated successfully."
+else
+  echo "[$(date)] Certificates already exist. Skipping generation."
+fi
+
+# Set permissions
+chown -R ubuntu:ubuntu /opt/wazuh
+chmod -R 755 /opt/wazuh
+
+# Start Wazuh services
+echo "[$(date)] Starting Wazuh services..."
+cd /opt/wazuh
+docker compose up -d
+
+echo "[$(date)] Wazuh server initialization completed successfully."
+EOF
+  )
 
   tags = {
     Name      = "wazuh-server"
