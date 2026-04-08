@@ -4,12 +4,6 @@ variable "s3_bucket_name" {
   default     = "cloud-soc-wazuh-assets"
 }
 
-variable "prevent_destroy_s3" {
-  type        = bool
-  description = "Protect S3 bucket from accidental destroy when true."
-  default     = true
-}
-
 resource "aws_s3_bucket" "wazuh_assets" {
   bucket = var.s3_bucket_name
 
@@ -19,20 +13,25 @@ resource "aws_s3_bucket" "wazuh_assets" {
     ManagedBy = "terraform"
   }
 
-  versioning {
-    enabled = true
-  }
-
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        sse_algorithm = "AES256"
-      }
-    }
-  }
-
   lifecycle {
-    prevent_destroy = var.prevent_destroy_s3
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "wazuh_assets" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "wazuh_assets" {
+  bucket = aws_s3_bucket.wazuh_assets.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
   }
 }
 

@@ -8,10 +8,10 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "wazuh_server" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.wazuh_sg.id]
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.wazuh_sg.id]
   associate_public_ip_address = true
 
   root_block_device {
@@ -20,8 +20,8 @@ resource "aws_instance" "wazuh_server" {
     delete_on_termination = true
   }
 
-  iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
-  key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
+  iam_instance_profile = aws_iam_instance_profile.wazuh_instance_profile.name
+  key_name             = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   depends_on = [
     aws_s3_object.wazuh_docker_compose,
@@ -124,12 +124,12 @@ EOF
 }
 
 resource "aws_instance" "victim_server" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.victim_sg.id]
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.victim_sg.id]
   associate_public_ip_address = true
-  key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
+  key_name                    = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   user_data = <<-EOF
               #!/bin/bash -xe

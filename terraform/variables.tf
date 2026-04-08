@@ -19,9 +19,9 @@ variable "instance_type" {
 }
 
 variable "wazuh_key_name" {
-  type    = string
+  type        = string
   description = "Existing EC2 key pair name for SSH access"
-  default = ""
+  default     = ""
 }
 
 variable "allowed_ssh_cidr" {
