@@ -134,12 +134,17 @@ resource "aws_instance" "victim_server" {
   user_data = <<-EOF
               #!/bin/bash -xe
               apt-get update -y
-              apt-get install -y apt-transport-https ca-certificates curl
-              curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | apt-key add -
-              echo "deb https://packages.wazuh.com/4.x/apt/ stable main" \
-                | tee /etc/apt/sources.list.d/wazuh.list
+              apt-get install -y apt-transport-https ca-certificates curl gnupg
+              curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
+              echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
               apt-get update -y
-              apt-get install -y nginx wazuh-agent
+              WAZUH_MANAGER="${aws_instance.wazuh_server.private_ip}" apt-get install -y wazuh-agent
+              systemctl daemon-reload
+              systemctl enable wazuh-agent
+              systemctl start wazuh-agent
+              sed -i "s/^deb/#deb/" /etc/apt/sources.list.d/wazuh.list
+              apt-get update -y
+              apt-get install -y nginx
               systemctl enable nginx
               systemctl start nginx
               EOF

@@ -62,7 +62,7 @@ import_if_missing() {
     echo_info "$terraform_addr already in state, skipping import"
     return
   fi
-  if [[ -z "$aws_id" || "$aws_id" == "None" ]]; then
+  if [[ -z "$aws_id" || "$aws_id" == "None" || "$aws_id" == *"None"* ]]; then
     echo_warn "No existing AWS resource ID for $terraform_addr; terraform will create it"
     return
   fi
@@ -105,7 +105,9 @@ find_route_table_association_import_id() {
   local rt_id subnet_id
   rt_id=$(find_route_table_id)
   subnet_id=$(find_subnet_id)
-  [[ -z "$rt_id" || -z "$subnet_id" ]] && return 0
+  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
+    return 0
+  fi
   echo "$subnet_id/$rt_id"
 }
 
@@ -139,10 +141,6 @@ find_iam_policy_arn() {
   aws iam list-policies --scope Local --query "Policies[?PolicyName=='$policy_name'].Arn | [0]" --output text 2>/dev/null || true
 }
 
-find_s3_bucket_name() {
-  echo "$S3_BUCKET_NAME"
-}
-
 find_ecr_repository_name() {
   echo "$ECR_REPOSITORY_NAME"
 }
@@ -160,6 +158,17 @@ find_role_policy_attachment_id() {
   policy_arn=$(find_iam_policy_arn)
   [[ -z "$policy_arn" ]] && return 0
   aws iam list-attached-role-policies --role-name "$role_name" --query "AttachedPolicies[?PolicyArn=='$policy_arn'].PolicyArn | [0]" --output text 2>/dev/null || true
+}
+
+find_s3_bucket_name() {
+  local bucket_name="$S3_BUCKET_NAME"
+  if [[ -z "$bucket_name" ]]; then
+    bucket_name="cloud-soc-wazuh-assets"
+  fi
+
+  if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
+    echo "$bucket_name"
+  fi
 }
 
 check_and_handle_vpc_limits() {
