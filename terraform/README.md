@@ -81,14 +81,21 @@ The script automatically handles security group conflicts that can occur when im
 - **Removes conflicting groups** from state when VPC changes
 - **Prevents deployment failures** due to duplicate names
 
+#### S3 Bucket Protection During Destroy
+The script provides safe destruction options for the S3 bucket containing Wazuh assets:
+- **Preserves S3 by default**: Option to destroy all resources except the S3 bucket
+- **Full destruction with protection**: When destroying the S3 bucket, temporarily disables `prevent_destroy`, empties the bucket, destroys all resources, then **automatically restores** `prevent_destroy = true` for future safety
+- **No manual restoration needed**: The script handles protection restoration automatically after successful destruction
+
 Example:
 ```bash
-./terraform_safe_apply.sh apply --auto-approve
+./terraform_safe_apply.sh destroy
+# Prompts for S3 destruction choice, then proceeds safely
 ```
 
 ### Script Workflow Diagram
 
-The following diagram illustrates the complete workflow of the `terraform_safe_apply.sh` script, including all resource types:
+The following diagram illustrates the complete workflow of the `terraform_safe_apply.sh` script, including all resource types and S3 bucket protection during destroy operations:
 
 ```mermaid
 graph TD
@@ -97,13 +104,28 @@ graph TD
     C --> D{"ACTION Type?"}
     
     D -->|plan/apply| E["Check VPC Limits"]
-    D -->|destroy| F["Run terraform destroy"]
+    D -->|destroy| DEST1["Prompt for S3<br/>destruction choice"]
     D -->|other| G["Error: Unknown action"]
     
-    F --> AO["Record destroy"]
-    AO --> AA["Exit successfully"]
+    DEST1 --> DEST2{"Choice?"}
+    DEST2 -->|1: Keep S3| DEST3["Destroy all<br/>except S3"]
+    DEST2 -->|2: Destroy S3| DEST5["Temporarily disable<br/>prevent_destroy"]
+    DEST2 -->|3: Cancel| DEST10["Record cancelled"]
+    DEST2 -->|Invalid| DEST11["Error: invalid choice"]
     
-    G --> AI["Exit with error"]
+    DEST3 --> DEST4["Record destroy<br/>(S3 preserved)"]
+    DEST4 --> AA
+    
+    DEST5 --> DEST6["Empty S3 bucket"]
+    DEST6 --> DEST7["Destroy all resources"]
+    DEST7 --> DEST8["Restore prevent_destroy"]
+    DEST8 --> DEST9["Record destroy<br/>(S3 destroyed)"]
+    DEST9 --> AA
+    
+    DEST10 --> AA
+    DEST11 --> AI
+    
+    G --> AI
     
     E --> H{"VPC Limit<br/>Reached?"}
     H -->|No| I["Find existing resources"]
@@ -189,8 +211,18 @@ graph TD
     style A fill:#e1f5e1
     style AA fill:#e1f5e1
     style AI fill:#ffe1e1
-    style F fill:#fff4e1
     style G fill:#ffe1e1
+    style DEST1 fill:#fff4e1
+    style DEST2 fill:#fff4e1
+    style DEST3 fill:#fff4e1
+    style DEST4 fill:#fff4e1
+    style DEST5 fill:#fff4e1
+    style DEST6 fill:#fff4e1
+    style DEST7 fill:#fff4e1
+    style DEST8 fill:#fff4e1
+    style DEST9 fill:#fff4e1
+    style DEST10 fill:#fff4e1
+    style DEST11 fill:#ffe1e1
     style S1 fill:#e3f2fd
     style S2 fill:#fff3e0
     style S3 fill:#f3e5f5
