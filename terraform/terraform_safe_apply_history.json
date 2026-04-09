@@ -25,3 +25,8 @@
 {"timestamp": "2026-04-08T15:41:06Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-04-08T15:42:09Z", "action": "destroy", "status": "error", "message": "terraform_safe_apply.sh failed"}
 {"timestamp": "2026-04-08T15:49:55Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-09T11:20:14Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-09T11:22:37Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-09T11:25:26Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-09T11:29:47Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-09T11:31:42Z", "action": "destroy", "status": "success", "message": "destroy complete (S3 destroyed)"}

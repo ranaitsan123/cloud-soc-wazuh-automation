@@ -392,8 +392,8 @@ handle_destroy_with_s3_protection() {
       echo_warn "⚠️  This will delete all Wazuh Docker assets stored in S3."
       read -p "Are you SURE? Type 'yes' to confirm: " -r confirm
       if [[ "$confirm" == "yes" ]]; then
-        echo_info "Removing prevent_destroy protection from S3 bucket..."
-        sed -i.bak 's/prevent_destroy = true/prevent_destroy = false/' s3.tf
+        echo_info "Temporarily removing prevent_destroy protection from S3 bucket..."
+        sed -i 's/prevent_destroy = true/prevent_destroy = false/' s3.tf
         
         echo_info "Emptying S3 bucket before destruction..."
         empty_s3_bucket "$S3_BUCKET_NAME"
@@ -401,10 +401,12 @@ handle_destroy_with_s3_protection() {
         echo_info "Destroying all resources including S3 bucket..."
         terraform destroy "${EXTRA_ARGS[@]}"
         
+        echo_info "Restoring prevent_destroy protection..."
+        sed -i 's/prevent_destroy = false/prevent_destroy = true/' s3.tf
+        
         record_history "success" "destroy complete (S3 destroyed)"
         echo_info "✅ Destroy complete. All resources including S3 bucket have been removed."
-        echo_info "💾 Backup created: s3.tf.bak"
-        echo_info "⚠️  Remember to restore prevent_destroy = true if you plan to rebuild."
+        echo_info "🔒 prevent_destroy protection has been automatically restored."
       else
         echo_info "Destroy cancelled."
         record_history "cancelled" "user cancelled full destroy"
