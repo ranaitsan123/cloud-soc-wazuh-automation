@@ -336,6 +336,11 @@ request_vpc_limit_increase() {
 empty_s3_bucket() {
   local bucket_name="$1"
   echo_info "Emptying S3 bucket: $bucket_name"
+
+  if ! aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
+    echo_warn "S3 bucket '$bucket_name' does not exist; skipping bucket emptying."
+    return 0
+  fi
   
   # Delete all object versions
   echo_info "Deleting all object versions..."

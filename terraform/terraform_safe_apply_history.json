@@ -41,3 +41,10 @@
 {"timestamp": "2026-04-09T14:24:00Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-04-09T14:26:28Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-04-09T14:29:45Z", "action": "destroy", "status": "success", "message": "destroy complete (S3 destroyed)"}
+{"timestamp": "2026-04-13T15:09:03Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-13T15:12:16Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-13T15:13:14Z", "action": "apply", "status": "error", "message": "terraform_safe_apply.sh failed"}
+{"timestamp": "2026-04-13T15:13:58Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-13T15:14:50Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-13T15:18:34Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-04-13T15:19:36Z", "action": "destroy", "status": "success", "message": "destroy complete (S3 destroyed)"}
