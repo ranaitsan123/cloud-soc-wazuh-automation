@@ -236,49 +236,149 @@ The script will:
 - ✅ Create EC2 instances, Security Groups, S3, ECR, and IAM roles
 - ✅ Log deployment history to `terraform_safe_apply_history.json`
 
-**4. Wazuh SOC (Deployed Automatically)**
+**4. Deploy Wazuh SOC**
 
-✅ **Everything is automated!** When you ran `terraform apply`, the EC2 instances were created with automated setup scripts that:
+Terraform automatically handles the entire Wazuh Stack deployment on the EC2 instance:
+- Sets system limits
+- Downloads configurations from S3
+- Generates certificates
+- Starts all services via Docker Compose
 
-- 🔧 Installed Docker, Docker Compose, and all dependencies
-- 📥 Downloaded all Wazuh configurations from S3
-- 🔐 Generated certificates automatically
-- 🚀 Started Wazuh services (Manager, Indexer, Dashboard)
-- 🤖 Configured and started Wazuh Agent on the victim VM
-
-**Just wait ~2-3 minutes for all services to fully initialize.**
+**⏳ Wait ~2-3 minutes for EC2 instance to initialize and services to start**
 
 **5. Access the Dashboard**
-
-Get the Wazuh server IP:
-```bash
-cd terraform/
-terraform output wazuh_server_public_ip
 ```
-
-Then access the dashboard:
-```
-🌐 Wazuh Dashboard: https://<wazuh_server_ip>
+🌐 Wazuh Dashboard: https://localhost
 📊 Port: 443 (HTTPS)
 👤 Default Username: admin
-🔐 Password: SecretPassword (default, change in config)
+🔐 Password: See wazuh-docker/config/wazuh.yml
 ```
 
 **6. Verify Deployment**
-
-SSH into the Wazuh server and check:
 ```bash
-ssh -i <your-key> ubuntu@<wazuh_server_ip>
+# Check all services are running
+docker compose ps
 
-# Check running containers
-docker compose -f /opt/wazuh/docker-compose.yml ps
-
-# View Wazuh Manager logs
-docker compose -f /opt/wazuh/docker-compose.yml logs -f wazuh.manager
-
-# Check initialization log
-tail -f /var/log/wazuh-init.log
+# View Wazuh logs
+docker compose logs -f wazuh.manager
 ```
+
+---
+
+## 🔐 Cloud Security & Architecture Design
+
+This project follows **cloud security best practices** and a **defense-in-depth strategy** to ensure a secure and resilient SOC environment.
+
+---
+
+### 🏗️ Architecture Design Principles
+
+The infrastructure is designed with the following principles:
+
+- **Isolation by design**
+  - Separation between SOC components and monitored resources
+  - Dedicated network segmentation using VPC
+
+- **Least privilege access**
+  - IAM roles and policies are strictly scoped
+  - No hardcoded credentials
+
+- **Infrastructure as Code (IaC)**
+  - All resources are provisioned using Terraform
+  - Ensures consistency, versioning, and reproducibility
+
+- **Modular architecture**
+  - Separation between infrastructure, detection, and automation layers
+
+---
+
+### 🌐 Network Security
+
+- Custom **VPC** with controlled subnets
+- Strict **Security Groups**:
+  - Only required ports are open (principle of minimal exposure)
+  - SSH access restricted to trusted IPs
+- Internal communication between components is limited and controlled
+
+---
+
+### 🔑 Identity & Access Management (IAM)
+
+- Use of **IAM Roles instead of static credentials**
+- Fine-grained permissions for:
+  - EC2 instances
+  - Automation scripts (Boto3)
+- Principle of **least privilege enforced across all services**
+
+---
+
+### 🖥️ Host Security
+
+- Wazuh agents deployed on all monitored instances
+- Continuous log monitoring:
+  - Authentication logs
+  - System activity
+  - File integrity monitoring (FIM)
+
+---
+
+### 📊 Logging & Monitoring
+
+- Centralized logging via Wazuh SIEM
+- Real-time alerting and visualization
+- Correlation of events with **MITRE ATT&CK framework**
+
+---
+
+### ⚔️ Threat Detection Strategy
+
+The detection approach is based on:
+
+- Signature-based detection (Wazuh rules)
+- Behavior-based detection (anomaly patterns)
+- Mapping to known attack techniques
+
+---
+
+### 🤖 Automated Incident Response
+
+- Integration with Wazuh Active Response
+- Python scripts using AWS SDK (Boto3)
+- Automated remediation actions:
+  - Blocking malicious IP addresses
+  - Modifying Security Groups dynamically
+  - Isolating compromised instances
+
+---
+
+### 🧪 Security Validation
+
+To validate the effectiveness of the architecture:
+
+- Simulated attacks using:
+  - Atomic Red Team
+  - MITRE Caldera
+- Continuous testing of:
+  - Detection capabilities
+  - Response mechanisms
+
+---
+
+### 🛡️ Defense-in-Depth Strategy
+
+Security is enforced across multiple layers:
+
+1. **Network layer** (VPC, Security Groups)
+2. **Identity layer** (IAM)
+3. **Host layer** (Wazuh agents)
+4. **Detection layer** (SIEM rules)
+5. **Response layer** (automation scripts)
+
+---
+
+### 📌 Key Takeaway
+
+This architecture demonstrates how to build a **secure, monitored, and automated cloud environment**, aligned with modern **DevSecOps and SOC practices**. It showcases proactive security thinking through layered defense mechanisms and automation-first incident response.
 
 ---
 
