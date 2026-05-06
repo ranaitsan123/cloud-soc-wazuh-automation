@@ -479,6 +479,7 @@ Comprehensive documentation is available in the [`/docs`](./docs) folder:
 - **Operational Scenarios** – Real-world use cases
 - **System Workflow** – End-to-end detection process
 - **IAM Permissions** – AWS security best practices
+- **Branch Strategy** – `feature/art-soc-baseline` plan and step-by-step validation
 - **UML Diagrams** – System design and interactions
 
 ---
