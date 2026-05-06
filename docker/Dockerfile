@@ -24,6 +24,11 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
     && ./aws/install \
     && rm -rf aws awscliv2.zip
 
+# Install AWS Session Manager Plugin
+RUN curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o session-manager-plugin.deb \
+    && dpkg -i session-manager-plugin.deb \
+    && rm session-manager-plugin.deb
+
 # Install Python libs
 RUN pip3 install boto3
 
