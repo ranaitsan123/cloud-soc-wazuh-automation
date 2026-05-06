@@ -8,20 +8,18 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "wazuh_server" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.wazuh_sg.id]
-  associate_public_ip_address = true
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.management_private.id
+  vpc_security_group_ids = [aws_security_group.wazuh_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
+  key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   root_block_device {
     volume_type           = "gp3"
     volume_size           = 50
     delete_on_termination = true
   }
-
-  iam_instance_profile = aws_iam_instance_profile.wazuh_instance_profile.name
-  key_name             = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   depends_on = [
     aws_s3_object.wazuh_docker_compose,
@@ -57,18 +55,19 @@ apt-get install -y \
   curl \
   software-properties-common \
   git \
-  awscli
+  awscli \
+  python3 \
+  python3-pip
 
 # Install Docker
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io
 usermod -aG docker ubuntu
 
-# Install Docker Compose
-curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
+# Install Python libs
+pip3 install boto3
 
 # Create wazuh directory structure
 mkdir -p /opt/wazuh/{config,custom_scripts}
@@ -124,30 +123,45 @@ EOF
 }
 
 resource "aws_instance" "victim_server" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.victim_sg.id]
-  associate_public_ip_address = true
-  key_name                    = var.wazuh_key_name != "" ? var.wazuh_key_name : null
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.production_private.id
+  vpc_security_group_ids = [aws_security_group.victim_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
+  key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   user_data = <<-EOF
-              #!/bin/bash -xe
-              apt-get update -y
-              apt-get install -y apt-transport-https ca-certificates curl gnupg
-              curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
-              echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee -a /etc/apt/sources.list.d/wazuh.list
-              apt-get update -y
-              WAZUH_MANAGER="${aws_instance.wazuh_server.private_ip}" apt-get install -y wazuh-agent
-              systemctl daemon-reload
-              systemctl enable wazuh-agent
-              systemctl start wazuh-agent
-              sed -i "s/^deb/#deb/" /etc/apt/sources.list.d/wazuh.list
-              apt-get update -y
-              apt-get install -y nginx
-              systemctl enable nginx
-              systemctl start nginx
-              EOF
+#!/bin/bash -xe
+apt-get update -y
+apt-get install -y apt-transport-https ca-certificates curl gnupg software-properties-common git wget
+
+# Install Docker
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io
+usermod -aG docker ubuntu
+
+# Install and configure Wazuh agent
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
+cat <<WAZUH_REPO >/etc/apt/sources.list.d/wazuh.list
+deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main
+WAZUH_REPO
+apt-get update -y
+WAZUH_MANAGER="${aws_instance.wazuh_server.private_ip}" apt-get install -y wazuh-agent
+systemctl daemon-reload
+systemctl enable wazuh-agent
+systemctl start wazuh-agent
+
+# Pull and run the victim container from ECR
+aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.victim_repo.repository_url}
+docker pull ${aws_ecr_repository.victim_repo.repository_url}:latest
+docker run -d --name victim-art -v /opt/fortress:/opt/fortress ${aws_ecr_repository.victim_repo.repository_url}:latest tail -f /dev/null
+
+# Start Wazuh agent service
+systemctl enable wazuh-agent
+systemctl start wazuh-agent
+EOF
 
   tags = {
     Name      = "victim-server"

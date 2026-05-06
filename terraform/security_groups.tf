@@ -7,32 +7,32 @@ resource "aws_security_group" "wazuh_sg" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS from anywhere"
+    cidr_blocks = [var.vpc_cidr]
+    description = "HTTPS from inside VPC A"
   }
 
   ingress {
     from_port   = 1514
     to_port     = 1514
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Wazuh agent syslog/TCP"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Wazuh agent syslog/TCP from VPC A"
   }
 
   ingress {
     from_port   = 1515
     to_port     = 1515
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Wazuh cluster communication"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Wazuh cluster communication inside VPC A"
   }
 
   ingress {
     from_port   = 55000
     to_port     = 55000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Wazuh agent registration"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Wazuh agent registration from VPC A"
   }
 
   ingress {
@@ -66,7 +66,7 @@ resource "aws_security_group" "victim_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.allowed_ssh_cidr]
     description = "SSH access for testing"
   }
 
@@ -74,8 +74,8 @@ resource "aws_security_group" "victim_sg" {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP app traffic"
+    cidr_blocks = [var.vpc_cidr]
+    description = "HTTP app traffic from internal network"
   }
 
   egress {

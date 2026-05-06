@@ -41,6 +41,20 @@ Create or extend a Wazuh Manager Dockerfile with these requirements:
 - Install `boto3`
 - Leave the image ready for Phase 3 response automation
 
+### Task 1.4: CI/CD Automation Setup
+
+Create a GitHub Actions workflow for automated Docker image building and ECR pushing:
+
+- Workflow file: `.github/workflows/build-victim-image.yml`
+- Triggers: Push to `feature/art-soc-baseline` branch affecting `docker/` or `atomics/` paths
+- Actions:
+  - Authenticate with AWS ECR
+  - Build the victim Docker image
+  - Tag with `latest` and commit SHA
+  - Push to ECR repository
+  - Comment on PRs with image details
+- Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+
 ## Phase 2: Infrastructure as Code (Terraform)
 
 ### Task 2.1: VPC A Implementation
@@ -90,7 +104,7 @@ From the Codespace terminal, execute the SSM command below, replacing `VICTIM_ID
 aws ssm send-command \
   --instance-ids "VICTIM_ID" \
   --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["pwsh -Command \"Invoke-AtomicTest T1053.005 -PathToAtomics /opt/fortress/atomics\""]'
+  --parameters 'commands=["docker exec victim-art pwsh -Command \"Invoke-AtomicTest T1053.005 -PathToAtomics /opt/fortress/atomics\""]'
 ```
 
 ### Task 3.3: Log Analysis

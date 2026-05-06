@@ -1,0 +1,74 @@
+name: Build and Push Victim Image to ECR
+
+on:
+  push:
+    branches:
+      - feature/art-soc-baseline
+    paths:
+      - 'docker/Dockerfile.victim'
+      - 'atomics/**'
+  pull_request:
+    branches:
+      - feature/art-soc-baseline
+    paths:
+      - 'docker/Dockerfile.victim'
+      - 'atomics/**'
+
+env:
+  AWS_REGION: eu-north-1
+  ECR_REPOSITORY: cloud-soc-victim
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build Docker image
+      run: |
+        docker build -f docker/Dockerfile.victim -t ${{ env.ECR_REPOSITORY }}:latest .
+
+    - name: Tag Docker image
+      run: |
+        docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+    - name: Push Docker image to ECR
+      run: |
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+    - name: Tag with commit SHA
+      run: |
+        docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+    - name: Create deployment artifact
+      run: |
+        echo "Image pushed successfully to: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest"
+        echo "Also tagged with commit SHA: ${{ github.sha }}"
+        echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}" >> $GITHUB_ENV
+
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `✅ Docker image built and pushed to ECR\n\n- **Image**: \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest\`\n- **Commit SHA tag**: \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}\`\n\nThe victim instance will pull this updated image during deployment.`
+          })

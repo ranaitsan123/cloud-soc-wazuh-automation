@@ -87,6 +87,11 @@ resource "aws_iam_role_policy_attachment" "attach_wazuh_policy" {
   policy_arn = aws_iam_policy.wazuh_ec2_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "attach_ssm_managed" {
+  role       = aws_iam_role.wazuh_ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "wazuh_instance_profile" {
   name = "wazuh-instance-profile"
   role = aws_iam_role.wazuh_ec2_role.name
