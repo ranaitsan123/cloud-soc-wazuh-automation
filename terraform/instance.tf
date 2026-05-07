@@ -29,7 +29,9 @@ resource "aws_instance" "wazuh_server" {
     aws_s3_object.wazuh_indexer_config,
     aws_s3_object.wazuh_indexer_users,
     aws_s3_object.wazuh_dashboard_config,
-    aws_s3_object.wazuh_dashboard_wazuh_yml
+    aws_s3_object.wazuh_dashboard_wazuh_yml,
+    aws_nat_gateway.nat,
+    aws_route_table_association.management_private
   ]
 
   user_data = base64encode(<<-EOF
@@ -129,6 +131,11 @@ resource "aws_instance" "victim_server" {
   vpc_security_group_ids = [aws_security_group.victim_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
   key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
+
+  depends_on = [
+    aws_nat_gateway.nat,
+    aws_route_table_association.production_private
+  ]
 
   user_data = <<-EOF
 #!/bin/bash -xe

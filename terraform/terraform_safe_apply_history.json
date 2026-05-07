@@ -68,3 +68,8 @@
 {"timestamp": "2026-05-06T15:49:23Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-05-07T11:42:48Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-05-07T11:46:50Z", "action": "apply", "status": "success", "message": "apply complete"}
+{"timestamp": "2026-05-07T12:37:41Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-07T12:40:01Z", "action": "apply", "status": "error", "message": "terraform_safe_apply.sh failed"}
+{"timestamp": "2026-05-07T12:58:31Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-07T13:01:05Z", "action": "apply", "status": "success", "message": "apply complete"}
+{"timestamp": "2026-05-07T14:59:13Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
