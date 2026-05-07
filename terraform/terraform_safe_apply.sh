@@ -27,14 +27,15 @@ HISTORY_FILE="terraform_safe_apply_history.json"
 
 # Resource names (match terraform vars in s3.tf, ecr.tf)
 S3_BUCKET_NAME="${S3_BUCKET_NAME:-cloud-soc-wazuh-assets}"
-ECR_REPOSITORY_NAME="${ECR_REPOSITORY_NAME:-cloud-soc-wazuh-repo}"
+ECR_VICTIM_REPOSITORY_NAME="${ECR_VICTIM_REPOSITORY_NAME:-cloud-soc-victim}"
+ECR_MANAGER_REPOSITORY_NAME="${ECR_MANAGER_REPOSITORY_NAME:-cloud-soc-wazuh-manager}"
 
 ########################################
 # Helpers
 ########################################
 
-echo_info() { echo -e "[INFO] $*" >&2; }
-echo_warn() { echo -e "[WARN] $*" >&2; }
+echo_info() { echo -e "[INFO] $*"; }
+echo_warn() { echo -e "[WARN] $*"; }
 
 record_history() {
   local status="$1"
@@ -75,8 +76,8 @@ find_vpc_id() {
   aws ec2 describe-vpcs --filters Name=tag:Name,Values=wazuh-vpc Name=tag:Project,Values=${PROJECT_TAG} --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true
 }
 
-find_subnet_id() {
-  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
+find_nat_public_subnet_id() {
+  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-nat-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
 }
 
 find_igw_id() {
@@ -101,169 +102,14 @@ find_route_table_association_id() {
   aws ec2 describe-route-tables --route-table-ids "$rt_id" --query "RouteTables[0].Associations[?SubnetId=='$subnet_id'].RouteTableAssociationId | [0]" --output text 2>/dev/null || true
 }
 
-find_route_table_association_import_id() {
+find_nat_public_route_table_association_id() {
   local rt_id subnet_id
   rt_id=$(find_route_table_id)
-  subnet_id=$(find_subnet_id)
+  subnet_id=$(find_nat_public_subnet_id)
   if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
     return 0
   fi
   echo "$subnet_id/$rt_id"
-}
-
-find_eip_id_for_nat() {
-  local vpc_id
-  vpc_id=$(find_vpc_id)
-  [[ -z "$vpc_id" ]] && return 0
-  # Find EIP allocated for NAT that's already associated
-  aws ec2 describe-addresses --filters Name=domain,Values=vpc --query "Addresses[?AssociationId!=null&&Tags[?Key=='Name'&&Value=='wazuh-nat-eip']].AllocationId | [0]" --output text 2>/dev/null || true
-}
-
-aws_query_with_timeout() {
-  local description="$1"
-  shift
-  local output
-
-  echo_info "Starting AWS query: $description"
-  if ! output=$(timeout 30s "$@" 2>/dev/null); then
-    echo_warn "AWS query timed out or failed: $description"
-    return 1
-  fi
-  echo_info "Completed AWS query: $description"
-  printf '%s' "$output"
-}
-
-find_nat_gateway_id() {
-  local vpc_id subnet_id
-  vpc_id=$(find_vpc_id)
-  echo_info "Finding NAT Gateway in VPC: $vpc_id"
-
-  subnet_id=$(aws_query_with_timeout "lookup nat-public subnet" aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-nat-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text || true)
-  subnet_id=${subnet_id:-}
-  echo_info "nat-public subnet ID: ${subnet_id:-none}"
-
-  if [[ -z "$vpc_id" || -z "$subnet_id" || "$vpc_id" == "None" || "$subnet_id" == "None" ]]; then
-    echo_warn "Could not determine nat-public subnet ID; falling back to any available NAT Gateway in VPC"
-    [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 0
-    aws_query_with_timeout "lookup any NAT Gateway in VPC" aws ec2 describe-nat-gateways --filters Name=vpc-id,Values=$vpc_id Name=state,Values=available --query 'NatGateways[0].NatGatewayId' --output text || true
-    return
-  fi
-
-  aws_query_with_timeout "lookup NAT Gateway in nat-public subnet" aws ec2 describe-nat-gateways --filters Name=vpc-id,Values=$vpc_id Name=subnet-id,Values=$subnet_id Name=state,Values=available --query 'NatGateways[0].NatGatewayId' --output text || true
-}
-
-cleanup_multiple_nat_gateways() {
-  local vpc_id
-  vpc_id=$(find_vpc_id)
-  [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 0
-
-  echo_info "Checking for multiple NAT Gateways in VPC: $vpc_id"
-
-  local nat_gateways
-  if ! nat_gateways=$(aws_query_with_timeout "list available NAT Gateways" aws ec2 describe-nat-gateways --filters Name=vpc-id,Values=$vpc_id Name=state,Values=available --query 'NatGateways[].NatGatewayId' --output text); then
-    echo_warn "Unable to enumerate NAT Gateways; skipping cleanup"
-    return 0
-  fi
-
-  echo_info "NAT Gateways found: ${nat_gateways:-none}"
-
-  local nat_count=0
-  for nat_id in $nat_gateways; do
-    ((nat_count++))
-  done
-
-  if [[ $nat_count -gt 1 ]]; then
-    echo_warn "Found $nat_count NAT Gateways in VPC. Cleaning up orphaned ones..."
-
-    local private_rt_id
-    private_rt_id=$(find_private_route_table_id)
-    echo_info "Private route table ID: ${private_rt_id:-none}"
-
-    local active_nat_id=""
-    if [[ -n "$private_rt_id" && "$private_rt_id" != "None" ]]; then
-      active_nat_id=$(aws_query_with_timeout "find active NAT Gateway in private route table" aws ec2 describe-route-tables --route-table-ids "$private_rt_id" --query 'RouteTables[0].Routes[?RouteStatus.Code==`active`&&NatGatewayId!=null].NatGatewayId | [0]' --output text || true)
-      active_nat_id=${active_nat_id:-}
-
-      if [[ -z "$active_nat_id" || "$active_nat_id" == "None" ]]; then
-        active_nat_id=$(aws_query_with_timeout "find any NAT Gateway in private route table" aws ec2 describe-route-tables --route-table-ids "$private_rt_id" --query 'RouteTables[0].Routes[?NatGatewayId!=null].NatGatewayId | [0]' --output text || true)
-        active_nat_id=${active_nat_id:-}
-      fi
-    fi
-
-    if [[ -n "$active_nat_id" && "$active_nat_id" != "None" ]]; then
-      echo_info "Active NAT Gateway in route table: $active_nat_id"
-      for nat_id in $nat_gateways; do
-        if [[ "$nat_id" != "$active_nat_id" ]]; then
-          echo_info "Removing orphaned NAT Gateway from Terraform state: $nat_id"
-          terraform state rm aws_nat_gateway.nat 2>/dev/null || true
-        fi
-      done
-    else
-      echo_warn "No active NAT Gateway could be resolved from the private route table. Leaving existing state untouched."
-    fi
-  fi
-}
-
-untaint_if_needed() {
-  local resource=$1
-  echo_info "Ensuring $resource is not tainted"
-  terraform untaint "$resource" 2>/dev/null || true
-}
-
-find_private_route_table_id() {
-  local vpc_id
-  vpc_id=$(find_vpc_id)
-  [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && return 0
-
-  echo_info "Looking up private route table for VPC: $vpc_id"
-  local rt_id
-  rt_id=$(aws_query_with_timeout "lookup private route table" aws ec2 describe-route-tables --filters Name=vpc-id,Values=$vpc_id Name=tag:Name,Values=wazuh-private-rt --query 'RouteTables[0].RouteTableId' --output text || true)
-  rt_id=${rt_id:-}
-  echo_info "Private route table ID: ${rt_id:-none}"
-  printf '%s' "$rt_id"
-}
-
-find_private_route_table_association_ids() {
-  local rt_id
-  rt_id=$(find_private_route_table_id)
-  [[ -z "$rt_id" || "$rt_id" == "None" ]] && return 0
-  
-  echo_info "Looking up associations for private route table: $rt_id"
-  aws_query_with_timeout "lookup private route table associations" aws ec2 describe-route-tables --route-table-ids "$rt_id" --query 'RouteTables[0].Associations[?SubnetId!=null].{SubnetId:SubnetId,AssociationId:RouteTableAssociationId}' --output text || true
-}
-
-find_private_rt_management_association_import_id() {
-  local rt_id subnet_id
-  rt_id=$(find_private_route_table_id)
-  subnet_id=$(aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-management-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true)
-  
-  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
-    return 0
-  fi
-  echo "$subnet_id/$rt_id"
-}
-
-find_private_rt_production_association_import_id() {
-  local rt_id subnet_id
-  rt_id=$(find_private_route_table_id)
-  subnet_id=$(aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-production-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true)
-  
-  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
-    return 0
-  fi
-  echo "$subnet_id/$rt_id"
-}
-
-find_nat_public_subnet_id() {
-  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-nat-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
-}
-
-find_management_private_subnet_id() {
-  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-management-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
-}
-
-find_production_private_subnet_id() {
-  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-production-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
 }
 
 find_security_group_id() {
@@ -520,42 +366,24 @@ empty_s3_bucket() {
   echo_info "✅ S3 bucket emptied successfully"
 }
 
-check_eip_permissions() {
-  local eip_id
-  eip_id=$(find_eip_id_for_nat)
-  if [[ -n "$eip_id" && "$eip_id" != "None" ]]; then
-    echo_info "Checking permissions for EIP: $eip_id"
-    if ! aws ec2 describe-addresses --allocation-ids "$eip_id" >/dev/null 2>&1; then
-      echo_warn "Cannot access EIP $eip_id. You may not have permission to disassociate it."
-      echo_warn "Please check your AWS permissions for ec2:DescribeAddresses and ec2:DisassociateAddress."
-      echo_warn "Destroy may fail. Consider granting proper permissions or manually disassociating the EIP."
-      return 1
-    fi
-  fi
-  return 0
-}
-
 handle_destroy_with_s3_protection() {
-  echo "" >&2
-  echo "============================================" >&2
-  echo "S3 Bucket Protection" >&2
-  echo "============================================" >&2
-  echo "" >&2
-  echo "The S3 bucket 'cloud-soc-wazuh-assets' has lifecycle.prevent_destroy enabled." >&2
-  echo "" >&2
-  echo "Choose what to destroy:" >&2
-  echo "  1) Everything EXCEPT the S3 bucket (recommended)" >&2
-  echo "  2) Everything INCLUDING the S3 bucket" >&2
-  echo "  3) Cancel destroy" >&2
-  echo "" >&2
+  echo ""
+  echo "============================================"
+  echo "S3 Bucket Protection"
+  echo "============================================"
+  echo ""
+  echo "The S3 bucket 'cloud-soc-wazuh-assets' has lifecycle.prevent_destroy enabled."
+  echo ""
+  echo "Choose what to destroy:"
+  echo "  1) Everything EXCEPT the S3 bucket (recommended)"
+  echo "  2) Everything INCLUDING the S3 bucket"
+  echo "  3) Cancel destroy"
+  echo ""
   read -p "Enter your choice (1-3): " -r choice
 
   case "$choice" in
     1)
       echo_info "Destroying all resources except S3 bucket..."
-      if ! check_eip_permissions; then
-        echo_warn "EIP permission check failed. Destroy may fail."
-      fi
       terraform destroy \
         -target=aws_instance.wazuh_server \
         -target=aws_instance.victim_server \
@@ -565,7 +393,7 @@ handle_destroy_with_s3_protection() {
         -target=aws_route_table_association.public \
         -target=aws_route_table.public \
         -target=aws_internet_gateway.igw \
-        -target=aws_subnet.nat_public \
+        -target=aws_subnet.public \
         -target=aws_vpc.wazuh_vpc \
         -target=aws_iam_instance_profile.wazuh_instance_profile \
         -target=aws_iam_role_policy_attachment.attach_wazuh_policy \
@@ -586,9 +414,6 @@ handle_destroy_with_s3_protection() {
         empty_s3_bucket "$S3_BUCKET_NAME"
         
         echo_info "Destroying all resources including S3 bucket..."
-        if ! check_eip_permissions; then
-          echo_warn "EIP permission check failed. Destroy may fail."
-        fi
         terraform destroy "${EXTRA_ARGS[@]}"
         
         echo_info "Restoring prevent_destroy protection..."
@@ -626,28 +451,9 @@ check_and_handle_vpc_limits
 
 import_if_missing aws_vpc.wazuh_vpc "$(find_vpc_id)"
 import_if_missing aws_internet_gateway.igw "$(find_igw_id)"
-
-# Import subnets (VPC A has 3 subnets: management_private, production_private, nat_public)
-import_if_missing aws_subnet.nat_public "$(find_nat_public_subnet_id)"
-import_if_missing aws_subnet.management_private "$(find_management_private_subnet_id)"
-import_if_missing aws_subnet.production_private "$(find_production_private_subnet_id)"
-
-# Import route tables and associations
+import_if_missing aws_subnet.public "$(find_subnet_id)"
 import_if_missing aws_route_table.public "$(find_route_table_id)"
 import_if_missing aws_route_table_association.public "$(find_route_table_association_import_id)"
-
-# Import EIP and NAT Gateway (for private subnets outbound)
-import_if_missing aws_eip.nat "$(find_eip_id_for_nat)"
-
-# Clean up multiple NAT Gateways before importing
-cleanup_multiple_nat_gateways
-
-import_if_missing aws_nat_gateway.nat "$(find_nat_gateway_id)"
-
-# Import private route table and its associations
-import_if_missing aws_route_table.private "$(find_private_route_table_id)"
-import_if_missing aws_route_table_association.management_private "$(find_private_rt_management_association_import_id)"
-import_if_missing aws_route_table_association.production_private "$(find_private_rt_production_association_import_id)"
 
 # Check for security group conflicts before importing them
 check_and_resolve_security_group_conflicts
@@ -680,10 +486,6 @@ fi
 # Plan/apply/destroy
 ########################################
 
-# Untaint any problematic resources before planning
-untaint_if_needed aws_nat_gateway.nat
-untaint_if_needed aws_route_table.private
-
 if [[ "$ACTION" == "plan" ]]; then
   terraform plan -out=tfplan "${EXTRA_ARGS[@]}"
   record_history "success" "plan complete"
@@ -700,7 +502,6 @@ elif [[ "$ACTION" == "apply" ]]; then
 
   # Attempt apply with error handling for VPC limits
   if terraform apply -auto-approve tfplan 2>&1; then
-    terraform output
     record_history "success" "apply complete"
     exit 0
   else
@@ -722,7 +523,6 @@ elif [[ "$ACTION" == "apply" ]]; then
       # Retry apply
       echo_info "Retrying terraform apply..."
       if terraform apply -auto-approve tfplan; then
-        terraform output
         record_history "success" "apply complete (after VPC cleanup)"
         exit 0
       else
