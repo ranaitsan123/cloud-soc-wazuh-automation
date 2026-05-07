@@ -53,3 +53,18 @@
 {"timestamp": "2026-04-14T14:56:03Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-04-14T14:58:37Z", "action": "destroy", "status": "success", "message": "destroy complete (S3 destroyed)"}
 {"timestamp": "2026-05-06T11:37:35Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T13:53:43Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T13:58:44Z", "action": "apply", "status": "error", "message": "apply failed: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mSaved plan is stale\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mThe given plan file can no longer be applied because the state was changed\n\u001b[31m\u2502\u001b[0m \u001b[0mby another operation after the plan was created.\n\u001b[31m\u2575\u001b[0m\u001b[0m"}
+{"timestamp": "2026-05-06T14:02:39Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T14:07:54Z", "action": "apply", "status": "error", "message": "apply failed: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mSaved plan is stale\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mThe given plan file can no longer be applied because the state was changed\n\u001b[31m\u2502\u001b[0m \u001b[0mby another operation after the plan was created.\n\u001b[31m\u2575\u001b[0m\u001b[0m"}
+{"timestamp": "2026-05-06T14:13:52Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T14:21:11Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T14:23:07Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T14:26:32Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T15:27:21Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T15:40:41Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T15:44:05Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T15:47:39Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-06T15:49:23Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-07T11:42:48Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-07T11:46:50Z", "action": "apply", "status": "success", "message": "apply complete"}
