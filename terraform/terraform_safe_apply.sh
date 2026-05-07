@@ -142,10 +142,6 @@ find_iam_policy_arn() {
   aws iam list-policies --scope Local --query "Policies[?PolicyName=='$policy_name'].Arn | [0]" --output text 2>/dev/null || true
 }
 
-find_ecr_repository_name() {
-  echo "$ECR_REPOSITORY_NAME"
-}
-
 find_instance_profile_name() {
   local instance_profile_name="wazuh-instance-profile"
   if aws iam get-instance-profile --instance-profile-name "$instance_profile_name" >/dev/null 2>&1; then
@@ -170,6 +166,96 @@ find_s3_bucket_name() {
   if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
     echo "$bucket_name"
   fi
+}
+
+find_management_private_subnet_id() {
+  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-management-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
+}
+
+find_production_private_subnet_id() {
+  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-production-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
+}
+
+find_nat_public_subnet_id() {
+  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-nat-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
+}
+
+find_private_route_table_id() {
+  local vpc_id
+  vpc_id=$(find_vpc_id)
+  [[ -z "$vpc_id" ]] && return 0
+  aws ec2 describe-route-tables --filters Name=vpc-id,Values=$vpc_id Name=tag:Name,Values=wazuh-private-rt --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || true
+}
+
+find_nat_gateway_id() {
+  local vpc_id
+  vpc_id=$(find_vpc_id)
+  [[ -z "$vpc_id" ]] && return 0
+  aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$vpc_id Name=tag:Name,Values=wazuh-nat-gateway --query 'NatGateways[0].NatGatewayId' --output text 2>/dev/null || true
+}
+
+find_eip_id() {
+  aws ec2 describe-addresses --filters Name=tag:Name,Values=wazuh-nat-eip Name=tag:Project,Values=${PROJECT_TAG} --query 'Addresses[0].AllocationId' --output text 2>/dev/null || true
+}
+
+find_ecr_victim_repository_name() {
+  aws ecr describe-repositories --repository-names "$ECR_VICTIM_REPOSITORY_NAME" --query 'repositories[0].repositoryName' --output text 2>/dev/null || true
+}
+
+find_ecr_manager_repository_name() {
+  aws ecr describe-repositories --repository-names "$ECR_MANAGER_REPOSITORY_NAME" --query 'repositories[0].repositoryName' --output text 2>/dev/null || true
+}
+
+find_management_private_route_table_association_id() {
+  local rt_id subnet_id
+  rt_id=$(find_private_route_table_id)
+  subnet_id=$(find_management_private_subnet_id)
+  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
+    return 0
+  fi
+  echo "$subnet_id/$rt_id"
+}
+
+find_production_private_route_table_association_id() {
+  local rt_id subnet_id
+  rt_id=$(find_private_route_table_id)
+  subnet_id=$(find_production_private_subnet_id)
+  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
+    return 0
+  fi
+  echo "$subnet_id/$rt_id"
+}
+
+find_nat_public_route_table_association_id() {
+  local rt_id subnet_id
+  rt_id=$(find_route_table_id)
+  subnet_id=$(find_nat_public_subnet_id)
+  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
+    return 0
+  fi
+  echo "$subnet_id/$rt_id"
+}
+
+check_subnet_enis() {
+  local subnet_id=$1
+  aws ec2 describe-network-interfaces --filters Name=subnet-id,Values=$subnet_id --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null || true
+}
+
+cleanup_enis() {
+  local subnet_ids=("$@")
+  for subnet_id in "${subnet_ids[@]}"; do
+    if [[ -z "$subnet_id" || "$subnet_id" == "None" ]]; then
+      continue
+    fi
+    enis=$(check_subnet_enis "$subnet_id")
+    if [[ -n "$enis" && "$enis" != "None" ]]; then
+      echo_info "Found lingering ENIs in subnet $subnet_id: $enis"
+      echo_info "Attempting to clean up ENIs..."
+      echo "$enis" | xargs -I {} sh -c 'aws ec2 delete-network-interface --network-interface-id {} 2>/dev/null && echo_info "Deleted ENI {}" || echo_warn "Failed to delete ENI {}"'
+    else
+      echo_info "No lingering ENIs found in subnet $subnet_id"
+    fi
+  done
 }
 
 check_and_handle_vpc_limits() {
@@ -384,20 +470,42 @@ handle_destroy_with_s3_protection() {
   case "$choice" in
     1)
       echo_info "Destroying all resources except S3 bucket..."
+      
+      # Pre-destroy cleanup to speed up subnet deletion
+      echo_info "Performing pre-destroy cleanup..."
+      management_subnet_id=$(find_management_private_subnet_id)
+      production_subnet_id=$(find_production_private_subnet_id)
+      nat_public_subnet_id=$(find_nat_public_subnet_id)
+      cleanup_enis "$management_subnet_id" "$production_subnet_id" "$nat_public_subnet_id"
+      
+      # Brief wait for AWS to process ENI deletions
+      echo_info "Waiting 30 seconds for ENI cleanup to complete..."
+      sleep 30
+      
       terraform destroy \
         -target=aws_instance.wazuh_server \
         -target=aws_instance.victim_server \
         -target=aws_security_group.wazuh_sg \
         -target=aws_security_group.victim_sg \
         -target=aws_security_group.jail_sg \
-        -target=aws_route_table_association.public \
+        -target=aws_route_table_association.nat_public \
+        -target=aws_route_table_association.management_private \
+        -target=aws_route_table_association.production_private \
         -target=aws_route_table.public \
+        -target=aws_route_table.private \
         -target=aws_internet_gateway.igw \
-        -target=aws_subnet.public \
+        -target=aws_nat_gateway.nat \
+        -target=aws_eip.nat \
+        -target=aws_subnet.nat_public \
+        -target=aws_subnet.management_private \
+        -target=aws_subnet.production_private \
         -target=aws_vpc.wazuh_vpc \
         -target=aws_iam_instance_profile.wazuh_instance_profile \
         -target=aws_iam_role_policy_attachment.attach_wazuh_policy \
+        -target=aws_iam_role_policy_attachment.attach_ssm_managed \
         -target=aws_iam_role.wazuh_ec2_role \
+        -target=aws_ecr_repository.victim_repo \
+        -target=aws_ecr_repository.manager_repo \
         "${EXTRA_ARGS[@]}"
       record_history "success" "destroy complete (S3 preserved)"
       echo_info "✅ Destroy complete. S3 bucket 'cloud-soc-wazuh-assets' was preserved."
@@ -412,6 +520,16 @@ handle_destroy_with_s3_protection() {
         
         echo_info "Emptying S3 bucket before destruction..."
         empty_s3_bucket "$S3_BUCKET_NAME"
+        
+        # Pre-destroy cleanup
+        echo_info "Performing pre-destroy cleanup..."
+        management_subnet_id=$(find_management_private_subnet_id)
+        production_subnet_id=$(find_production_private_subnet_id)
+        nat_public_subnet_id=$(find_nat_public_subnet_id)
+        cleanup_enis "$management_subnet_id" "$production_subnet_id" "$nat_public_subnet_id"
+        
+        echo_info "Waiting 30 seconds for ENI cleanup to complete..."
+        sleep 30
         
         echo_info "Destroying all resources including S3 bucket..."
         terraform destroy "${EXTRA_ARGS[@]}"
@@ -451,9 +569,16 @@ check_and_handle_vpc_limits
 
 import_if_missing aws_vpc.wazuh_vpc "$(find_vpc_id)"
 import_if_missing aws_internet_gateway.igw "$(find_igw_id)"
-import_if_missing aws_subnet.public "$(find_subnet_id)"
+import_if_missing aws_subnet.nat_public "$(find_nat_public_subnet_id)"
+import_if_missing aws_subnet.management_private "$(find_management_private_subnet_id)"
+import_if_missing aws_subnet.production_private "$(find_production_private_subnet_id)"
+import_if_missing aws_eip.nat "$(find_eip_id)"
+import_if_missing aws_nat_gateway.nat "$(find_nat_gateway_id)"
 import_if_missing aws_route_table.public "$(find_route_table_id)"
-import_if_missing aws_route_table_association.public "$(find_route_table_association_import_id)"
+import_if_missing aws_route_table.private "$(find_private_route_table_id)"
+import_if_missing aws_route_table_association.nat_public "$(find_nat_public_route_table_association_id)"
+import_if_missing aws_route_table_association.management_private "$(find_management_private_route_table_association_id)"
+import_if_missing aws_route_table_association.production_private "$(find_production_private_route_table_association_id)"
 
 # Check for security group conflicts before importing them
 check_and_resolve_security_group_conflicts
@@ -466,8 +591,8 @@ import_if_missing aws_instance.wazuh_server "$(find_instance_id_by_name wazuh-se
 import_if_missing aws_instance.victim_server "$(find_instance_id_by_name victim-server)"
 
 import_if_missing aws_s3_bucket.wazuh_assets "$(find_s3_bucket_name)"
-# ECR import commented out - ECR resources are disabled for now
-# import_if_missing aws_ecr_repository.wazuh_repo "$(find_ecr_repository_name)"
+import_if_missing aws_ecr_repository.victim_repo "$(find_ecr_victim_repository_name)"
+import_if_missing aws_ecr_repository.manager_repo "$(find_ecr_manager_repository_name)"
 
 import_if_missing aws_iam_role.wazuh_ec2_role "$(find_iam_role_arn | awk -F'/' '{print $NF}')"
 import_if_missing aws_iam_policy.wazuh_ec2_policy "$(find_iam_policy_arn)"
