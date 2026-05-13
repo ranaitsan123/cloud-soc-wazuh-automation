@@ -13,8 +13,11 @@ EXTRA_ARGS=("$@")
 
 ## Load .env if exists
 if [[ -f .env ]]; then
-  # shellcheck disable=SC1090
-  source .env
+  # Safer alternative to source - only export simple KEY=VALUE pairs
+  set -a
+  # shellcheck disable=SC1091
+  . .env
+  set +a
 fi
 
 terraform init -input=false
@@ -23,7 +26,7 @@ terraform init -input=false
 NAME_TAG="cloud-soc"
 PROJECT_TAG="cloud-soc"
 COMMON_TAG_FILTER="Name=tag:Project,Values=${PROJECT_TAG}"
-HISTORY_FILE="terraform_safe_apply_history.json"
+HISTORY_FILE="terraform_safe_apply_history.jsonl"
 
 # Resource names (match terraform vars in s3.tf, ecr.tf)
 S3_BUCKET_NAME="${S3_BUCKET_NAME:-cloud-soc-wazuh-assets}"
@@ -53,7 +56,7 @@ record_history "started" "terraform_safe_apply.sh started"
 
 stack_has() {
   local resource=$1
-  terraform state list | grep -q "^${resource}$"
+  terraform state list 2>/dev/null | grep -q "^${resource}$"
 }
 
 import_if_missing() {
@@ -68,7 +71,19 @@ import_if_missing() {
     return
   fi
   echo_info "Importing $terraform_addr: $aws_id"
-  terraform import "$terraform_addr" "$aws_id"
+  local import_output
+  import_output=$(terraform import "$terraform_addr" "$aws_id" 2>&1)
+  local import_exit_code=$?
+  if [[ $import_exit_code -ne 0 ]]; then
+    # If import fails because resource is already managed, try to remove and re-import
+    if echo "$import_output" | grep -q "Resource already managed by Terraform"; then
+      echo_warn "Resource $terraform_addr already managed, removing from state and re-importing..."
+      terraform state rm "$terraform_addr" 2>/dev/null || true
+      terraform import "$terraform_addr" "$aws_id" || echo_warn "Failed to import $terraform_addr after state removal"
+    else
+      echo_warn "Import failed for $terraform_addr: $import_output"
+    fi
+  fi
 }
 
 # Query helpers for resources, matching by Name tags used in resources defined.
@@ -176,10 +191,6 @@ find_production_private_subnet_id() {
   aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-production-private-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
 }
 
-find_nat_public_subnet_id() {
-  aws ec2 describe-subnets --filters Name=tag:Name,Values=wazuh-nat-public-subnet Name=tag:Project,Values=${PROJECT_TAG} --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true
-}
-
 find_private_route_table_id() {
   local vpc_id
   vpc_id=$(find_vpc_id)
@@ -233,16 +244,43 @@ wait_for_ssm() {
   local count=0
 
   while [[ $count -lt $attempts ]]; do
+    # First check if instance is registered with SSM
     if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].InstanceId' --output text >/dev/null 2>&1; then
-      echo_info "SSM is available for instance $instance_id"
-      return 0
+      # Then attempt a trivial command to verify SSM can execute
+      local test_command_id
+      test_command_id=$(aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "$SSM_DOCUMENT_NAME" \
+        --parameters '{"command":["echo ready"]}' \
+        --timeout-seconds 60 \
+        --comment "SSM readiness test" \
+        --output text --query 'Command.CommandId' 2>/dev/null || echo "")
+
+      if [[ -n "$test_command_id" ]]; then
+        # Wait for the test command to complete
+        local test_attempts=6
+        local test_count=0
+        while [[ $test_count -lt $test_attempts ]]; do
+          local status
+          status=$(aws ssm list-command-invocations --command-id "$test_command_id" --instance-id "$instance_id" --query 'CommandInvocations[0].Status' --output text 2>/dev/null || echo "")
+          if [[ "$status" == "Success" ]]; then
+            echo_info "SSM is ready for instance $instance_id"
+            return 0
+          fi
+          if [[ "$status" == "Failed" || "$status" == "Cancelled" || "$status" == "TimedOut" ]]; then
+            break  # Test failed, will retry outer loop
+          fi
+          sleep 5
+          test_count=$((test_count + 1))
+        done
+      fi
     fi
-    echo_info "Waiting for SSM availability for instance $instance_id..."
+    echo_info "Waiting for SSM readiness for instance $instance_id..."
     sleep 10
     count=$((count + 1))
   done
 
-  echo_warn "Timed out waiting for SSM on instance $instance_id"
+  echo_warn "Timed out waiting for SSM readiness on instance $instance_id"
   return 1
 }
 
@@ -325,6 +363,12 @@ run_ansible_on_instance() {
 }
 
 post_apply_configuration() {
+  # Check if terraform state exists and has outputs
+  if ! terraform output -json >/dev/null 2>&1; then
+    echo_warn "Terraform state not available or no outputs exist"
+    return 1
+  fi
+
   local manager_instance_id victim_instance_id s3_bucket_name ecr_victim_repository_url wazuh_manager_ip aws_region
 
   manager_instance_id=$(terraform output -raw wazuh_instance_id)
@@ -379,16 +423,6 @@ find_production_private_route_table_association_id() {
   echo "$subnet_id/$rt_id"
 }
 
-find_nat_public_route_table_association_id() {
-  local rt_id subnet_id
-  rt_id=$(find_route_table_id)
-  subnet_id=$(find_nat_public_subnet_id)
-  if [[ -z "$rt_id" || -z "$subnet_id" || "$rt_id" == "None" || "$subnet_id" == "None" ]]; then
-    return 0
-  fi
-  echo "$subnet_id/$rt_id"
-}
-
 check_subnet_enis() {
   local subnet_id=$1
   aws ec2 describe-network-interfaces --filters Name=subnet-id,Values=$subnet_id --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null || true
@@ -400,13 +434,17 @@ cleanup_enis() {
     if [[ -z "$subnet_id" || "$subnet_id" == "None" ]]; then
       continue
     fi
-    enis=$(check_subnet_enis "$subnet_id")
+    # Only delete detached ENIs (status=available)
+    enis=$(aws ec2 describe-network-interfaces \
+      --filters Name=subnet-id,Values=$subnet_id Name=status,Values=available \
+      --query 'NetworkInterfaces[*].NetworkInterfaceId' \
+      --output text 2>/dev/null || true)
     if [[ -n "$enis" && "$enis" != "None" ]]; then
-      echo_info "Found lingering ENIs in subnet $subnet_id: $enis"
+      echo_info "Found detached ENIs in subnet $subnet_id: $enis"
       echo_info "Attempting to clean up ENIs..."
       echo "$enis" | xargs -I {} sh -c 'aws ec2 delete-network-interface --network-interface-id "$1" 2>/dev/null && echo "[INFO] Deleted ENI $1" || echo "[WARN] Failed to delete ENI $1"' _ {}
     else
-      echo_info "No lingering ENIs found in subnet $subnet_id"
+      echo_info "No detached ENIs found in subnet $subnet_id"
     fi
   done
 }
@@ -506,28 +544,31 @@ check_and_resolve_security_group_conflicts() {
 cleanup_orphaned_vpcs() {
   echo_info "Looking for orphaned VPCs to clean up..."
 
-  # Find VPCs with our project tag but no associated resources
-  local orphaned_vpcs
-  orphaned_vpcs=$(aws ec2 describe-vpcs \
+  # Find VPCs with our project tag
+  local candidate_vpcs
+  candidate_vpcs=$(aws ec2 describe-vpcs \
     --filters "Name=tag:Project,Values=${PROJECT_TAG}" \
-    --query 'Vpcs[?length(Associations)==`0`].VpcId' --output text 2>/dev/null || true)
+    --query 'Vpcs[].VpcId' \
+    --output text 2>/dev/null || true)
 
-  for vpc_id in $orphaned_vpcs; do
+  for vpc_id in $candidate_vpcs; do
     if [[ "$vpc_id" != "None" && -n "$vpc_id" ]]; then
-      echo_info "Attempting to delete orphaned VPC: $vpc_id"
+      echo_info "Inspecting VPC: $vpc_id"
 
-      # Check if VPC has any dependencies
-      local subnet_count igw_count sg_count
+      # Check for attached resources
+      local subnet_count igw_count nat_count sg_count instance_count
       subnet_count=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'length(Subnets)' --output text 2>/dev/null || echo "0")
       igw_count=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'length(InternetGateways)' --output text 2>/dev/null || echo "0")
-      sg_count=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=[\"default\"]" --query 'length(SecurityGroups)' --output text 2>/dev/null || echo "1")
+      nat_count=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query 'length(NatGateways)' --output text 2>/dev/null || echo "0")
+      sg_count=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'length(SecurityGroups)' --output text 2>/dev/null || echo "0")
+      instance_count=$(aws ec2 describe-instances --filters "Name=vpc-id,Values=$vpc_id" --query 'length(Reservations)' --output text 2>/dev/null || echo "0")
 
-      if [[ "$subnet_count" == "0" && "$igw_count" == "0" && "$sg_count" == "1" ]]; then
-        # VPC appears to be empty (only default security group)
-        echo_info "Deleting empty VPC: $vpc_id"
+      # Only delete if VPC appears to be truly empty (only default security group)
+      if [[ "$subnet_count" == "0" && "$igw_count" == "0" && "$nat_count" == "0" && "$instance_count" == "0" && "$sg_count" == "1" ]]; then
+        echo_info "VPC $vpc_id appears to be empty, deleting..."
         aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null && echo_info "Successfully deleted VPC: $vpc_id" || echo_warn "Failed to delete VPC: $vpc_id"
       else
-        echo_warn "VPC $vpc_id has dependencies (subnets: $subnet_count, IGWs: $igw_count), skipping..."
+        echo_warn "VPC $vpc_id has dependencies (subnets: $subnet_count, IGWs: $igw_count, NATs: $nat_count, instances: $instance_count, SGs: $sg_count), skipping..."
       fi
     fi
   done
@@ -684,7 +725,8 @@ handle_destroy_with_s3_protection() {
         echo_info "Waiting 30 seconds for ENI cleanup to complete..."
         sleep 30
         
-        echo_info "Destroying all resources including S3 bucket..."
+        echo_i.bak 's/prevent_destroy = false/prevent_destroy = true/' s3.tf
+        rm -f s3.tf.bak
         terraform destroy "${EXTRA_ARGS[@]}"
         
         echo_info "Restoring prevent_destroy protection..."
@@ -760,6 +802,14 @@ if ! stack_has aws_iam_role_policy_attachment.attach_wazuh_policy; then
   fi
 fi
 
+# Import SSM managed policy attachment
+if ! stack_has aws_iam_role_policy_attachment.attach_ssm_managed; then
+  if [[ -n "$(find_iam_role_arn)" ]]; then
+    echo_info "Attempting to import SSM managed policy attachment"
+    terraform import aws_iam_role_policy_attachment.attach_ssm_managed "wazuh-ec2-role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" || echo_warn "SSM attachment not present; plan/apply will create if needed"
+  fi
+fi
+
 ########################################
 # Plan/apply/destroy
 ########################################
@@ -779,8 +829,11 @@ elif [[ "$ACTION" == "apply" ]]; then
   terraform plan -out=tfplan "${EXTRA_ARGS[@]}"
 
   # Attempt apply with error handling for VPC limits
-  if terraform apply -auto-approve tfplan 2>&1; then
+  apply_output_file=$(mktemp)
+
+  if terraform apply -auto-approve tfplan 2>&1 | tee "$apply_output_file"; then
     record_history "success" "apply complete"
+    rm -f "$apply_output_file"
     if ! post_apply_configuration; then
       echo_warn "Post-apply Ansible configuration failed. Infrastructure is deployed, but instance provisioning may require manual review."
       record_history "warning" "post-apply configuration failed"
@@ -790,7 +843,8 @@ elif [[ "$ACTION" == "apply" ]]; then
     exit 0
   else
     apply_exit_code=$?
-    apply_output=$(terraform apply -auto-approve tfplan 2>&1 || true)
+    apply_output=$(cat "$apply_output_file")
+    rm -f "$apply_output_file"
 
     # Check if the error is VPC limit exceeded
     if echo "$apply_output" | grep -q "VpcLimitExceeded"; then
