@@ -253,7 +253,7 @@ send_ssm_command() {
   aws ssm send-command \
     --instance-ids "$instance_id" \
     --document-name "$SSM_DOCUMENT_NAME" \
-    --parameters commands="$commands_json" \
+    --parameters "commands=$commands_json" \
     --timeout-seconds "$SSM_COMMAND_TIMEOUT" \
     --comment "Configure EC2 instance with Ansible" \
     --output text --query 'Command.CommandId'
@@ -298,7 +298,7 @@ run_ansible_on_instance() {
     'cd /opt/ansible' \
     'if [[ ! -d /opt/ansible/.git ]]; then rm -rf /opt/ansible/*; git clone "'"$ANSIBLE_REPO_URL"'" /opt/ansible; fi' \
     'cd /opt/ansible' \
-    'ansible-playbook ansible/playbooks/'"$playbook"' -i localhost --extra-vars "'$extra_vars'"' \
+    'ansible-playbook ansible/playbooks/'"$playbook"' -i localhost --extra-vars "'"${extra_vars}"'"' \
     | json_array)
 
   local command_id

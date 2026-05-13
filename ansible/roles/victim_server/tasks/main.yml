@@ -74,25 +74,35 @@
     group: ubuntu
     mode: '0755'
 
+- name: Configure Wazuh agent manager connection
+  ansible.builtin.lineinfile:
+    path: /var/ossec/etc/ossec.conf
+    regexp: '<manager>'
+    line: '      <address>{{ wazuh_manager_ip }}</address>'
+    insertafter: '<!-- Manager connection -->'
+    state: present
+  notify: restart wazuh-agent
+
 - name: Login to ECR
   ansible.builtin.shell: |
-    aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin {{ ecr_victim_repository_url }}
+    aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin $(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f1)
   args:
     executable: /bin/bash
 
 - name: Pull victim container image from ECR
-  ansible.builtin.shell: |
-    docker pull {{ ecr_victim_repository_url }}:latest
-  args:
-    executable: /bin/bash
+  ansible.builtin.docker_image:
+    name: "{{ ecr_victim_repository_url }}"
+    tag: latest
+    source: pull
+  environment:
+    AWS_REGION: "{{ aws_region }}"
 
 - name: Ensure victim-art container is running
-  ansible.builtin.shell: |
-    if docker ps --format '{{"{{.Names}}"}}' | grep -q '^victim-art$'; then
-      echo 'victim-art already running'
-    else
-      docker rm -f victim-art 2>/dev/null || true
-      docker run -d --name victim-art -v /opt/fortress:/opt/fortress {{ ecr_victim_repository_url }}:latest tail -f /dev/null
-    fi
-  args:
-    executable: /bin/bash
+  ansible.builtin.docker_container:
+    name: victim-art
+    image: "{{ ecr_victim_repository_url }}:latest"
+    state: started
+    restart_policy: always
+    volumes:
+      - /opt/fortress:/opt/fortress
+    command: tail -f /dev/null
