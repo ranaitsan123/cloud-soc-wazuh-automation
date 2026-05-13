@@ -2,13 +2,7 @@ name: Build and Push Victim Image to ECR
 
 on:
   push:
-    paths:
-      - 'docker/Dockerfile.victim'
-      - 'atomics/**'
   pull_request:
-    paths:
-      - 'docker/Dockerfile.victim'
-      - 'atomics/**'
   workflow_dispatch:
 
 env:
