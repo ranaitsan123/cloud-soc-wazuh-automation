@@ -80,3 +80,6 @@
 {"timestamp": "2026-05-07T16:19:02Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-05-07T16:32:41Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
 {"timestamp": "2026-05-07T16:36:20Z", "action": "destroy", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-13T12:16:32Z", "action": "apply", "status": "started", "message": "terraform_safe_apply.sh started"}
+{"timestamp": "2026-05-13T12:20:10Z", "action": "apply", "status": "success", "message": "apply complete"}
+{"timestamp": "2026-05-13T12:20:18Z", "action": "apply", "status": "success", "message": "post-apply Ansible configuration completed"}

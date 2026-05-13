@@ -2,17 +2,14 @@ name: Build and Push Victim Image to ECR
 
 on:
   push:
-    branches:
-      - feature/art-soc-baseline
     paths:
       - 'docker/Dockerfile.victim'
       - 'atomics/**'
   pull_request:
-    branches:
-      - feature/art-soc-baseline
     paths:
       - 'docker/Dockerfile.victim'
       - 'atomics/**'
+  workflow_dispatch:
 
 env:
   AWS_REGION: eu-north-1
