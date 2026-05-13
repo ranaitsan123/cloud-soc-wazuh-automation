@@ -250,19 +250,27 @@ send_ssm_command() {
   local instance_id="$1"
   local commands_json="$2"
 
-  aws ssm send-command \
+  local output error_output
+  output=$(aws ssm send-command \
     --instance-ids "$instance_id" \
     --document-name "$SSM_DOCUMENT_NAME" \
-    --parameters "commands=$commands_json" \
+    --parameters '{"command":'"$commands_json"'}' \
     --timeout-seconds "$SSM_COMMAND_TIMEOUT" \
     --comment "Configure EC2 instance with Ansible" \
-    --output text --query 'Command.CommandId'
+    --output text --query 'Command.CommandId' 2>&1) || true
+
+  if [[ -z "$output" || "$output" == *"Error"* || "$output" == *"error"* ]]; then
+    echo_warn "SSM send-command error: $output"
+    return 1
+  fi
+
+  echo "$output"
 }
 
 wait_for_ssm_command() {
   local command_id="$1"
   local instance_id="$2"
-  local attempts=60
+  local attempts=120
   local count=0
 
   while [[ $count -lt $attempts ]]; do
@@ -274,10 +282,14 @@ wait_for_ssm_command() {
     fi
     if [[ "$status" == "Failed" || "$status" == "Cancelled" || "$status" == "TimedOut" ]]; then
       echo_warn "SSM command $command_id ended with status $status on instance $instance_id"
+      # Capture and display the error output
+      local output
+      output=$(aws ssm list-command-invocations --command-id "$command_id" --instance-id "$instance_id" --details --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text 2>/dev/null || echo "No output available")
+      echo_warn "Command output/error: $output"
       return 1
     fi
-    echo_info "Waiting for SSM command $command_id to complete (status: $status)"
-    sleep 10
+    echo_info "Waiting for SSM command $command_id to complete (status: $status, attempt: $((count+1))/$attempts)"
+    sleep 5
     count=$((count + 1))
   done
 
@@ -294,11 +306,12 @@ run_ansible_on_instance() {
 
   local commands
   commands=$(printf '%s\n' \
-    'set -e' \
+    'set -ex' \
     'cd /opt/ansible' \
     'if [[ ! -d /opt/ansible/.git ]]; then rm -rf /opt/ansible/*; git clone "'"$ANSIBLE_REPO_URL"'" /opt/ansible; fi' \
     'cd /opt/ansible' \
-    'ansible-playbook ansible/playbooks/'"$playbook"' -i localhost --extra-vars "'"${extra_vars}"'"' \
+    'export ANSIBLE_ROLES_PATH=/opt/ansible/ansible/roles' \
+    'ansible-playbook ansible/playbooks/'"$playbook"' -i localhost -vv --extra-vars "'"${extra_vars}"'"' \
     | json_array)
 
   local command_id
