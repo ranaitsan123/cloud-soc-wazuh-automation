@@ -29,7 +29,7 @@ RUN curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubunt
     && dpkg -i session-manager-plugin.deb \
     && rm session-manager-plugin.deb
 
-# Install Python libs
-RUN pip3 install boto3
+# Install Python libs and Ansible
+RUN pip3 install boto3 ansible
 
 WORKDIR /workspace

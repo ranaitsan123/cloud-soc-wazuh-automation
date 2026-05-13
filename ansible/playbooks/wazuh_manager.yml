@@ -1,0 +1,9 @@
+- name: Configure Wazuh Manager
+  hosts: localhost
+  gather_facts: false
+  become: true
+  vars:
+    s3_bucket_name: "{{ s3_bucket_name | default('cloud-soc-wazuh-assets') }}"
+    s3_prefix: "{{ s3_prefix | default('wazuh-docker') }}"
+  roles:
+    - wazuh_manager

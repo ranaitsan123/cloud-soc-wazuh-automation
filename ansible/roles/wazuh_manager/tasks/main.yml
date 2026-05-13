@@ -1,0 +1,132 @@
+- name: Ensure apt cache is updated
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install Wazuh manager prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+      - git
+      - awscli
+      - python3
+      - python3-pip
+    state: present
+    update_cache: yes
+
+- name: Install Docker GPG key
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+    state: present
+    filename: docker
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+
+- name: Install boto3 Python module
+  ansible.builtin.pip:
+    name: boto3
+    executable: pip3
+
+- name: Ensure Wazuh directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    recurse: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  loop:
+    - /opt/wazuh
+    - /opt/wazuh/config
+    - /opt/wazuh/config/wazuh_cluster
+    - /opt/wazuh/config/wazuh_indexer
+    - /opt/wazuh/config/wazuh_dashboard
+    - /opt/wazuh/config/wazuh_indexer_ssl_certs
+
+- name: Download wazuh-docker docker-compose.yml from S3
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/docker-compose.yml" /opt/wazuh/docker-compose.yml
+  args:
+    creates: /opt/wazuh/docker-compose.yml
+
+- name: Download generate-indexer-certs.yml from S3
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/generate-indexer-certs.yml" /opt/wazuh/generate-indexer-certs.yml
+  args:
+    creates: /opt/wazuh/generate-indexer-certs.yml
+
+- name: Download Wazuh manager config
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/certs.yml" /opt/wazuh/config/certs.yml
+  args:
+    creates: /opt/wazuh/config/certs.yml
+
+- name: Download Wazuh cluster config
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_cluster/wazuh_manager.conf" /opt/wazuh/config/wazuh_cluster/wazuh_manager.conf
+  args:
+    creates: /opt/wazuh/config/wazuh_cluster/wazuh_manager.conf
+
+- name: Download Wazuh indexer config
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_indexer/wazuh.indexer.yml" /opt/wazuh/config/wazuh_indexer/wazuh.indexer.yml
+  args:
+    creates: /opt/wazuh/config/wazuh_indexer/wazuh.indexer.yml
+
+- name: Download Wazuh indexer users
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_indexer/internal_users.yml" /opt/wazuh/config/wazuh_indexer/internal_users.yml
+  args:
+    creates: /opt/wazuh/config/wazuh_indexer/internal_users.yml
+
+- name: Download Wazuh dashboard config
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_dashboard/opensearch_dashboards.yml" /opt/wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+  args:
+    creates: /opt/wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+
+- name: Download Wazuh dashboard Wazuh config
+  ansible.builtin.command:
+    cmd: aws s3 cp "s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_dashboard/wazuh.yml" /opt/wazuh/config/wazuh_dashboard/wazuh.yml
+  args:
+    creates: /opt/wazuh/config/wazuh_dashboard/wazuh.yml
+
+- name: Generate certificates if needed
+  ansible.builtin.shell: |
+    if [ ! -d /opt/wazuh/config/wazuh_indexer_ssl_certs ] || [ -z "$(ls -A /opt/wazuh/config/wazuh_indexer_ssl_certs 2>/dev/null)" ]; then
+      cd /opt/wazuh
+      docker compose -f generate-indexer-certs.yml run --rm generator
+    fi
+  args:
+    executable: /bin/bash
+
+- name: Fix permissions for /opt/wazuh
+  ansible.builtin.file:
+    path: /opt/wazuh
+    recurse: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Start Wazuh services with Docker Compose
+  ansible.builtin.shell: |
+    cd /opt/wazuh
+    docker compose up -d
+  args:
+    executable: /bin/bash

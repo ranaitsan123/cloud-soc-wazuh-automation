@@ -164,6 +164,38 @@ The NAT Gateway enables the instances to reach the internet securely for package
    - the Victim private IP
    - the S3 bucket name
    - the ECR repository URLs
+   - the SSM port-forward command for local Wazuh UI access
+
+## Accessing Wazuh Manager locally via SSM port forwarding
+
+Once the Wazuh Manager is running, you can open the UI locally by forwarding remote port `443` to a local port such as `8443`.
+
+From your Codespace terminal:
+
+```bash
+cd /workspaces/cloud-soc-wazuh-automation
+aws ssm start-session --target $(terraform -chdir=terraform output -raw wazuh_instance_id) \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["127.0.0.1"],"portNumber":["443"],"localPortNumber":["8443"]}'
+```
+
+Then open:
+
+```text
+https://127.0.0.1:8443
+```
+
+## Ansible documentation and attack workflow
+
+A full explanation of the new SSM + Ansible deployment plan is available in `docs/ansible/README.md`.
+
+To execute an Atomic Red Team attack on the victim instance via SSM, run:
+
+```bash
+bash scripts/run-atomic-attack.sh
+```
+
+This uses the default technique `T1053.005` inside the victim container.
 
 ## Notes and next steps
 

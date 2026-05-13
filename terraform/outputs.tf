@@ -22,6 +22,16 @@ output "wazuh_instance_private_ip" {
   value = aws_instance.wazuh_server.private_ip
 }
 
+output "wazuh_manager_ui_url" {
+  value = "https://${aws_instance.wazuh_server.private_ip}"
+  description = "Private HTTPS URL for the Wazuh Manager UI. Use with VPN/SSM port forwarding if outside the VPC."
+}
+
+output "wazuh_manager_ssm_port_forward_command" {
+  value = "aws ssm start-session --target ${aws_instance.wazuh_server.id} --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '{\"host\":[\"127.0.0.1\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"8443\"]}'"
+  description = "Local command to forward the Wazuh Manager UI over SSM to https://127.0.0.1:8443."
+}
+
 output "victim_instance_id" {
   value = aws_instance.victim_server.id
 }

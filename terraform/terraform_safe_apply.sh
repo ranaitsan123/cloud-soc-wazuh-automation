@@ -206,6 +206,146 @@ find_ecr_manager_repository_name() {
   aws ecr describe-repositories --repository-names "$ECR_MANAGER_REPOSITORY_NAME" --query 'repositories[0].repositoryName' --output text 2>/dev/null || true
 }
 
+ANSIBLE_REPO_URL="${ANSIBLE_REPO_URL:-https://github.com/ranaitsan123/cloud-soc-wazuh-automation.git}"
+SSM_DOCUMENT_NAME="AWS-RunShellScript"
+SSM_COMMAND_TIMEOUT="${SSM_COMMAND_TIMEOUT:-1200}"
+
+json_array() {
+  python3 - <<'PY'
+import json,sys
+print(json.dumps([line.rstrip('\n') for line in sys.stdin]))
+PY
+}
+
+get_aws_region() {
+  if [[ -n "${AWS_DEFAULT_REGION:-}" ]]; then
+    echo "$AWS_DEFAULT_REGION"
+  elif [[ -n "${AWS_REGION:-}" ]]; then
+    echo "$AWS_REGION"
+  else
+    echo "eu-north-1"
+  fi
+}
+
+wait_for_ssm() {
+  local instance_id="$1"
+  local attempts=30
+  local count=0
+
+  while [[ $count -lt $attempts ]]; do
+    if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${instance_id}" --query 'InstanceInformationList[0].InstanceId' --output text >/dev/null 2>&1; then
+      echo_info "SSM is available for instance $instance_id"
+      return 0
+    fi
+    echo_info "Waiting for SSM availability for instance $instance_id..."
+    sleep 10
+    count=$((count + 1))
+  done
+
+  echo_warn "Timed out waiting for SSM on instance $instance_id"
+  return 1
+}
+
+send_ssm_command() {
+  local instance_id="$1"
+  local commands_json="$2"
+
+  aws ssm send-command \
+    --instance-ids "$instance_id" \
+    --document-name "$SSM_DOCUMENT_NAME" \
+    --parameters commands="$commands_json" \
+    --timeout-seconds "$SSM_COMMAND_TIMEOUT" \
+    --comment "Configure EC2 instance with Ansible" \
+    --output text --query 'Command.CommandId'
+}
+
+wait_for_ssm_command() {
+  local command_id="$1"
+  local instance_id="$2"
+  local attempts=60
+  local count=0
+
+  while [[ $count -lt $attempts ]]; do
+    local status
+    status=$(aws ssm list-command-invocations --command-id "$command_id" --instance-id "$instance_id" --details --query 'CommandInvocations[0].Status' --output text 2>/dev/null || echo "")
+    if [[ "$status" == "Success" ]]; then
+      echo_info "SSM command $command_id succeeded on instance $instance_id"
+      return 0
+    fi
+    if [[ "$status" == "Failed" || "$status" == "Cancelled" || "$status" == "TimedOut" ]]; then
+      echo_warn "SSM command $command_id ended with status $status on instance $instance_id"
+      return 1
+    fi
+    echo_info "Waiting for SSM command $command_id to complete (status: $status)"
+    sleep 10
+    count=$((count + 1))
+  done
+
+  echo_warn "Timed out waiting for SSM command $command_id on instance $instance_id"
+  return 1
+}
+
+run_ansible_on_instance() {
+  local instance_id="$1"
+  local playbook="$2"
+  local extra_vars="$3"
+
+  echo_info "Running Ansible playbook $playbook on instance $instance_id"
+
+  local commands
+  commands=$(printf '%s\n' \
+    'set -e' \
+    'cd /opt/ansible' \
+    'if [[ ! -d /opt/ansible/.git ]]; then rm -rf /opt/ansible/*; git clone "'"$ANSIBLE_REPO_URL"'" /opt/ansible; fi' \
+    'cd /opt/ansible' \
+    'ansible-playbook ansible/playbooks/'"$playbook"' -i localhost --extra-vars "'$extra_vars'"' \
+    | json_array)
+
+  local command_id
+  command_id=$(send_ssm_command "$instance_id" "$commands")
+  if [[ -z "$command_id" ]]; then
+    echo_warn "Failed to send SSM command to instance $instance_id"
+    return 1
+  fi
+
+  wait_for_ssm_command "$command_id" "$instance_id"
+}
+
+post_apply_configuration() {
+  local manager_instance_id victim_instance_id s3_bucket_name ecr_victim_repository_url wazuh_manager_ip aws_region
+
+  manager_instance_id=$(terraform output -raw wazuh_instance_id)
+  victim_instance_id=$(terraform output -raw victim_instance_id)
+  s3_bucket_name=$(terraform output -raw s3_bucket_name)
+  ecr_victim_repository_url=$(terraform output -raw ecr_victim_repository_url)
+  wazuh_manager_ip=$(terraform output -raw wazuh_instance_private_ip)
+  aws_region=$(get_aws_region)
+
+  if [[ -z "$manager_instance_id" || -z "$victim_instance_id" ]]; then
+    echo_warn "Cannot determine EC2 instance IDs for post-apply configuration"
+    return 1
+  fi
+
+  echo_info "Waiting for Wazuh manager SSM readiness..."
+  wait_for_ssm "$manager_instance_id"
+
+  echo_info "Configuring Wazuh manager with Ansible..."
+  run_ansible_on_instance "$manager_instance_id" "wazuh_manager.yml" "s3_bucket_name=${s3_bucket_name} s3_prefix=wazuh-docker"
+
+  echo_info "Waiting for victim server SSM readiness..."
+  wait_for_ssm "$victim_instance_id"
+
+  echo_info "Configuring victim server with Ansible..."
+  run_ansible_on_instance "$victim_instance_id" "victim_server.yml" "wazuh_manager_ip=${wazuh_manager_ip} aws_region=${aws_region} ecr_victim_repository_url=${ecr_victim_repository_url}"
+
+  echo_info "Wazuh Manager UI is available privately at https://${wazuh_manager_ip}"
+  echo_info "Local access via SSM port forwarding:"
+  echo_info "  aws ssm start-session --target ${manager_instance_id} --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '{\"host\":[\"127.0.0.1\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"8443\"]}'"
+  echo_info "Then open https://127.0.0.1:8443 in your browser."
+
+  return 0
+}
+
 find_management_private_route_table_association_id() {
   local rt_id subnet_id
   rt_id=$(find_private_route_table_id)
@@ -628,6 +768,12 @@ elif [[ "$ACTION" == "apply" ]]; then
   # Attempt apply with error handling for VPC limits
   if terraform apply -auto-approve tfplan 2>&1; then
     record_history "success" "apply complete"
+    if ! post_apply_configuration; then
+      echo_warn "Post-apply Ansible configuration failed. Infrastructure is deployed, but instance provisioning may require manual review."
+      record_history "warning" "post-apply configuration failed"
+    else
+      record_history "success" "post-apply Ansible configuration completed"
+    fi
     exit 0
   else
     apply_exit_code=$?
