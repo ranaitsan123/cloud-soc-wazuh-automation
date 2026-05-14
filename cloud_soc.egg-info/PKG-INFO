@@ -290,7 +290,71 @@ docker compose logs -f wazuh.manager
 
 ---
 
-## 🔐 Cloud Security & Architecture Design
+## � Python Infrastructure Platform (NEW)
+
+Starting from this version, the project includes a **modern Python-based orchestration platform** for managing infrastructure and incident response workflows.
+
+### Modern CLI Interface
+
+```bash
+# Install Python CLI
+pip install -e .
+
+# Use the new cloud-soc command
+cloud-soc status      # Show infrastructure status
+cloud-soc apply       # Deploy infrastructure changes
+cloud-soc destroy     # Remove infrastructure
+cloud-soc validate    # Validate configuration
+```
+
+### Key Features
+
+✅ **Type-Safe Operations** - Pydantic models for all AWS resources
+✅ **Boto3 Integration** - Native AWS SDK instead of CLI parsing
+✅ **Terraform Orchestration** - Automated Terraform workflows
+✅ **Service-Oriented** - Modular services for EC2, IAM, S3, ECR, SSM
+✅ **Comprehensive Logging** - Structured logging for all operations
+✅ **Well-Tested** - Pytest test suite with examples
+
+### Documentation
+
+- 📖 [QUICKSTART.md](QUICKSTART.md) - Quick start guide with examples
+- 📖 [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Complete migration documentation
+- 📖 [cloudsoc/README.md](cloudsoc/README.md) - Python API documentation
+- 📖 [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - What was implemented
+
+### Python API Example
+
+```python
+from cloudsoc.aws.ec2 import EC2Service
+from cloudsoc.terraform.runner import TerraformRunner
+from pathlib import Path
+
+# Discover AWS resources
+ec2 = EC2Service(region="eu-north-1")
+vpc = ec2.find_vpc(project_tag="cloud-soc")
+instances = ec2.find_instances(vpc_id=vpc.id)
+
+# Orchestrate Terraform
+runner = TerraformRunner(terraform_dir=Path("terraform"))
+runner.init()
+runner.validate()
+runner.apply()
+```
+
+### Technology Stack
+
+| Component | Technology | Version |
+|-----------|-----------|---------|
+| CLI Framework | Typer | 0.9+ |
+| AWS SDK | Boto3 | 1.26+ |
+| Type Validation | Pydantic | 2.0+ |
+| Console UI | Rich | 13.0+ |
+| Testing | Pytest | 7.0+ |
+
+---
+
+## �🔐 Cloud Security & Architecture Design
 
 This project follows **cloud security best practices** and a **defense-in-depth strategy** to ensure a secure and resilient SOC environment.
 

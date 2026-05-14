@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
 
+# Upgrade pip and packaging tools for PEP 660 editable installs
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
 # Install Terraform
 RUN curl -fsSL https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip -o terraform.zip \
     && unzip terraform.zip \
