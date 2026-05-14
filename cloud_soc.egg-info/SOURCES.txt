@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+cloud_soc.egg-info/PKG-INFO
+cloud_soc.egg-info/SOURCES.txt
+cloud_soc.egg-info/dependency_links.txt
+cloud_soc.egg-info/entry_points.txt
+cloud_soc.egg-info/requires.txt
+cloud_soc.egg-info/top_level.txt
+cloudsoc/__init__.py
+cloudsoc/main.py

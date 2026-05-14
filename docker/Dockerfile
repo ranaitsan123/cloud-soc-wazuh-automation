@@ -29,7 +29,19 @@ RUN curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubunt
     && dpkg -i session-manager-plugin.deb \
     && rm session-manager-plugin.deb
 
+# Install uv (Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install Python libs and Ansible
-RUN pip3 install boto3 ansible
+RUN pip3 install \
+    boto3 \
+    ansible \
+    typer[all] \
+    rich \
+    pydantic \
+    python-dotenv \
+    pytest \
+    pytest-asyncio \
+    pyyaml
 
 WORKDIR /workspace
