@@ -1,5 +1,6 @@
 """Ansible deployment service"""
 
+import os
 from pathlib import Path
 from typing import Optional, List
 import shutil
@@ -61,8 +62,10 @@ class AnsibleService:
         if inventory:
             cmd.extend(["-i", inventory])
 
+        env = None
         if self.roles_path.exists():
-            cmd.extend(["--roles-path", str(self.roles_path)])
+            env = os.environ.copy()
+            env["ANSIBLE_ROLES_PATH"] = str(self.roles_path)
 
         if extra_vars:
             for key, value in extra_vars.items():
@@ -76,7 +79,7 @@ class AnsibleService:
 
         try:
             self.logger.info(f"Running playbook: {playbook_name}")
-            run_command(cmd)
+            run_command(cmd, env=env)
             self.logger.info(f"✓ Playbook {playbook_name} completed successfully")
             return True
 

@@ -48,8 +48,8 @@
     path: "{{ item }}"
     state: directory
     recurse: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"
+    group: "{{ wazuh_group | default(wazuh_user | default(ansible_user_id | default('root'))) }}"
     mode: '0755'
   loop:
     - /opt/wazuh
@@ -120,8 +120,8 @@
   ansible.builtin.file:
     path: /opt/wazuh
     recurse: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"
+    group: "{{ wazuh_group | default(wazuh_user | default(ansible_user_id | default('root'))) }}"
     mode: '0755'
 
 - name: Start Wazuh services with Docker Compose

@@ -1,7 +1,8 @@
 """Shell command execution utilities"""
 
+import os
 import subprocess
-from typing import List, Optional
+from typing import Dict, List, Optional
 from cloudsoc.utils.logger import logger
 
 
@@ -13,6 +14,7 @@ class ShellCommandError(Exception):
 def run_command(
     cmd: List[str],
     cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
     check: bool = True,
     capture_output: bool = False
 ) -> subprocess.CompletedProcess:
@@ -22,6 +24,7 @@ def run_command(
     Args:
         cmd: List of command and arguments
         cwd: Working directory for the command
+        env: Environment variables to use for the command
         check: Raise exception on non-zero exit (default: True)
         capture_output: Capture stdout/stderr (default: False)
 
@@ -37,6 +40,7 @@ def run_command(
         result = subprocess.run(
             cmd,
             cwd=cwd,
+            env=env or os.environ.copy(),
             check=False,
             capture_output=capture_output,
             text=capture_output

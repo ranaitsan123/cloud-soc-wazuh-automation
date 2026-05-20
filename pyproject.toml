@@ -16,7 +16,7 @@ authors = [
 keywords = ["terraform", "aws", "soc", "automation", "infra-as-code"]
 
 dependencies = [
-    "typer[all]>=0.9.0",
+    "typer>=0.9.0",
     "rich>=13.0.0",
     "boto3>=1.26.0",
     "pydantic>=2.0.0",
