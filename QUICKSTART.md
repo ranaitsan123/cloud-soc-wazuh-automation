@@ -49,6 +49,16 @@ cloud-soc destroy
 cloud-soc destroy --auto-approve --force
 ```
 
+### Open the Wazuh Dashboard
+```bash
+cloud-soc dashboard
+```
+
+Then open:
+```bash
+https://127.0.0.1:8443
+```
+
 ### Validate Configuration
 ```bash
 cloud-soc validate

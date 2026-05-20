@@ -10,6 +10,7 @@ from rich.table import Table
 from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
+from cloudsoc.orchestrator import DeploymentOrchestrator, OrchestrationError
 from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
@@ -55,37 +56,45 @@ def apply(
     )
 
     try:
-        # Initialize Terraform runner
-        tf_runner = TerraformRunner(
-            terraform_dir=settings.project.terraform.dir,
-            auto_approve=auto_approve
-        )
-
-        # Initialize Terraform
-        logger.info("Initializing Terraform...")
-        tf_runner.init()
-
-        # Validate configuration
-        logger.info("Validating configuration...")
-        tf_runner.validate()
-
-        # Create plan
-        logger.info("Creating Terraform plan...")
+        orchestrator = DeploymentOrchestrator()
+        logger.info("Starting deployment orchestration...")
         var_file_list = [var_files] if var_files else []
-        plan_file = tf_runner.plan(var_files=var_file_list)
+        orchestrator.apply(auto_approve=auto_approve, var_files=var_file_list)
 
-        # Apply plan
-        logger.info("Applying Terraform plan...")
-        tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
+    except (TerraformStateError, OrchestrationError) as e:
+        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
 
-        console.print(
-            Panel(
-                "[bold green]✓ Infrastructure applied successfully![/bold green]",
-                expand=False
-            )
+
+@app.command()
+def dashboard(
+    local_port: int = typer.Option(
+        8443,
+        "--local-port",
+        help="Local port for dashboard port forwarding"
+    ),
+    remote_port: int = typer.Option(
+        443,
+        "--remote-port",
+        help="Remote dashboard port on the Wazuh instance"
+    ),
+) -> None:
+    """Open an SSM tunnel to the Wazuh Dashboard."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Dashboard Access[/yellow]",
+            expand=False
         )
+    )
 
-    except TerraformStateError as e:
+    try:
+        orchestrator = DeploymentOrchestrator()
+        orchestrator.open_dashboard(local_port=local_port, remote_port=remote_port)
+    except OrchestrationError as e:
         console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
         raise typer.Exit(code=1)
     except Exception as e:

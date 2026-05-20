@@ -164,6 +164,42 @@ class SSMService:
             self.logger.error(f"Parameter not found: {name}")
             return None
 
+    def wait_for_instance(
+        self,
+        instance_id: str,
+        timeout: int = 600,
+        poll_interval: int = 15
+    ) -> bool:
+        """Wait until the SSM agent is online for the target instance."""
+        import time
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                response = self.client.describe_instance_information(
+                    Filters=[
+                        {
+                            "Key": "InstanceIds",
+                            "Values": [instance_id]
+                        }
+                    ]
+                )
+                instances = response.get("InstanceInformationList", [])
+
+                if instances and instances[0].get("PingStatus") == "Online":
+                    self.logger.info(f"✓ SSM is online for instance {instance_id}")
+                    return True
+
+            except ClientError as e:
+                self.logger.debug(f"SSM instance information read failed: {e}")
+
+            self.logger.info(f"Waiting for SSM readiness for {instance_id}...")
+            time.sleep(poll_interval)
+
+        self.logger.warning(f"SSM did not become ready for instance {instance_id} within {timeout} seconds")
+        return False
+
     def delete_parameter(self, name: str) -> bool:
         """
         Delete SSM parameter.

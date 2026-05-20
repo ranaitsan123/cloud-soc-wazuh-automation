@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Optional, List
+import shutil
 from cloudsoc.utils.shell import run_command, ShellCommandError
 from cloudsoc.utils.logger import logger
 
@@ -17,6 +18,7 @@ class AnsibleService:
             playbooks_dir: Path to Ansible playbooks directory
         """
         self.playbooks_dir = Path(playbooks_dir)
+        self.roles_path = self.playbooks_dir.parent / "roles"
         self.logger = logger
 
     def run_playbook(
@@ -46,10 +48,21 @@ class AnsibleService:
             self.logger.error(f"Playbook not found: {playbook_path}")
             return False
 
-        cmd = ["ansible-playbook", str(playbook_path)]
+        ansible_playbook = self._resolve_ansible_playbook()
+        if not ansible_playbook:
+            self.logger.error(
+                "ansible-playbook was not found on PATH. "
+                "Install Ansible or ensure ansible-playbook is available."
+            )
+            return False
+
+        cmd = [ansible_playbook, str(playbook_path)]
 
         if inventory:
             cmd.extend(["-i", inventory])
+
+        if self.roles_path.exists():
+            cmd.extend(["--roles-path", str(self.roles_path)])
 
         if extra_vars:
             for key, value in extra_vars.items():
@@ -70,6 +83,10 @@ class AnsibleService:
         except ShellCommandError as e:
             self.logger.error(f"✗ Playbook failed: {e}")
             return False
+
+    def _resolve_ansible_playbook(self) -> Optional[str]:
+        """Resolve the ansible-playbook executable path."""
+        return shutil.which("ansible-playbook")
 
     def run_task(
         self,

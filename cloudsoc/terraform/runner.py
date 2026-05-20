@@ -216,6 +216,22 @@ class TerraformRunner:
             logger.warning(f"Failed to read outputs: {e}")
             return {}
 
+    def output_raw(self, key: str) -> str:
+        """Get a Terraform output value in raw format."""
+        cmd = ["terraform", "output", "-raw", key]
+
+        try:
+            result = self._run(cmd, capture_output=True)
+            return result.stdout.strip()
+        except ShellCommandError as e:
+            logger.warning(f"Failed to read raw output {key}: {e}")
+            return ""
+
+    def output_value(self, key: str) -> Any:
+        """Get a Terraform output value by key."""
+        outputs = self.output()
+        return outputs.get(key, {}).get("value")
+
     def show_state(self) -> None:
         """Display current Terraform state (for debugging)."""
         logger.info("[terraform show]")

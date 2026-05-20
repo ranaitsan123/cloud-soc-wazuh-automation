@@ -9,3 +9,4 @@ cloud_soc.egg-info/requires.txt
 cloud_soc.egg-info/top_level.txt
 cloudsoc/__init__.py
 cloudsoc/main.py
+cloudsoc/orchestrator.py
