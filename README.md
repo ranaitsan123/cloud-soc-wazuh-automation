@@ -95,7 +95,7 @@ It combines **cloud infrastructure, SIEM, attack simulation, and DevSecOps autom
 ### 🔹 Infrastructure Automation
 - ✅ Fully automated AWS deployment using **Terraform**
 - ✅ Reproducible and scalable environment
-- ✅ Safe apply scripts with **changelogging** and rollback support
+- ✅ Infrastructure orchestration through the `cloud-soc` Python CLI
 - ✅ Centralized configuration management (S3, ECR)
 - ✅ IAM best practices with minimal privilege policies
 
@@ -142,8 +142,7 @@ cloud-soc-wazuh-automation/
 │   ├── providers.tf               # AWS provider configuration
 │   ├── variables.tf               # Input variables
 │   ├── main.tf / *.tf             # Resource definitions
-│   ├── terraform_safe_apply.sh    # Safe deployment script
-│   └── terraform_safe_apply_changelog.* # Deployment history
+│   └── (Terraform configuration executed by `cloud-soc` CLI)
 │
 ├── 📁 wazuh-docker/               # Wazuh SIEM deployment
 │   ├── docker-compose.yml         # Wazuh services orchestration
@@ -218,23 +217,17 @@ docker-compose exec devops bash
 
 **3. Deploy AWS Infrastructure**
 ```bash
-cd terraform/
+# From the repository root, run the Python orchestration CLI
+cloud-soc apply
 
-# Initialize Terraform
-terraform init -input=false
+# For non-interactive deployment
+cloud-soc apply --auto-approve
 
-# Review deployment plan
-./terraform_safe_apply.sh plan
-
-# Deploy infrastructure (with automatic VPC management & changelog)
-./terraform_safe_apply.sh apply
+# Use a custom Terraform variables file
+cloud-soc apply --var-file prod.tfvars
 ```
 
-The script will:
-- ✅ Automatically import existing AWS resources (prevents duplicates)
-- ✅ Manage VPC limits intelligently
-- ✅ Create EC2 instances, Security Groups, S3, ECR, and IAM roles
-- ✅ Log deployment history to `terraform_safe_apply_history.json`
+The CLI will initialize Terraform, validate the configuration, generate a plan, and apply the changes automatically.
 
 **4. Deploy Wazuh SOC**
 

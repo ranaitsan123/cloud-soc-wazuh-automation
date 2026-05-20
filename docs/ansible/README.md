@@ -41,7 +41,7 @@ This keeps the initial VM image lightweight and avoids embedding business logic 
 
 ### 3. Post-apply Ansible configuration
 
-After `terraform apply`, `terraform_safe_apply.sh` calls `post_apply_configuration()` to:
+After `cloud-soc apply`, the Python orchestration workflow handles post-apply configuration to:
 
 - wait until each instance is reachable through SSM
 - run `ansible-playbook` remotely on the instance via `AWS-RunShellScript`
