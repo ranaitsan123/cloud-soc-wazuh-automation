@@ -158,20 +158,10 @@ resource "aws_iam_instance_profile" "victim_instance_profile" {
 ## 🟠 HIGH PRIORITY ISSUES
 
 ### 6. **Cleanup Script May Miss Dependent Resources**
-**File**: [scripts/terraform_cleaner.sh](scripts/terraform_cleaner.sh)  
-**Problem**: Manual cleanup of AWS resources but doesn't cover all resource types.
+**File**: scripts/terraform_cleaner.sh (REMOVED from repository)
+**Note**: Ce script a été supprimé du dépôt. Pour l'analyse et la résolution des ressources orphelines, utilisez `scripts/terraform_history_report.sh` ou le CLI `cloud-soc` qui gère l'orchestration Terraform.
 
-```bash
-# Cleans: instances, ENIs, security groups
-# Misses: NAT gateways, Elastic IPs, route tables, subnets, VPC
-cleanup_orphaned_aws_resources() {
-  ...
-  terminate_project_instances "$vpc_id"
-  cleanup_network_interfaces "$vpc_id"
-  cleanup_security_groups "$vpc_id"
-  # ← Missing NAT, EIP, route tables cleanup
-}
-```
+**Problem (historical)**: Le script manuel précédent n'abordait pas tous les types de ressources (NAT, EIP, tables de routage, sous-réseaux, etc.), d'où des destructions Terraform incomplètes.
 
 **Impact**:
 - `terraform destroy` fails due to dependency issues
@@ -191,8 +181,8 @@ cleanup_nat_gateways() {
 ---
 
 ### 7. **No Terraform Plan Review Before Destroy**
-**File**: [scripts/terraform_cleaner.sh](scripts/terraform_cleaner.sh)  
-**Problem**: Creates destroy plan but minimal resource preview.
+**File**: scripts/terraform_cleaner.sh (REMOVED from repository)
+**Problem (historical)**: Création d'un plan de destruction avec aperçu minimal des ressources.
 
 ```bash
 echo "Destroy plan resources (preview):"

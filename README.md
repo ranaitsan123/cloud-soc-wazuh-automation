@@ -164,7 +164,6 @@ cloud-soc-wazuh-automation/
 │   └── README.md
 │
 ├── 📁 scripts/                    # Utility scripts
-│   ├── terraform_cleaner.sh       # Cleanup resources
 │   └── terraform_history_report.sh
 │
 ├── 📁 docs/                       # Technical documentation
