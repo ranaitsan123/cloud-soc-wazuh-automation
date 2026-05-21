@@ -71,16 +71,20 @@ To access it from your local environment, use SSM port forwarding to map remote 
 
 ### Recommended helper
 
-Use the helper script:
+Use the Python CLI helper:
 
 ```bash
-bash scripts/ssm-port-forward-wazuh.sh
+cloud-soc dashboard
 ```
 
-Then open:
+This opens an SSM port-forwarding tunnel to the Wazuh Manager and maps it to `https://127.0.0.1:8443` by default.
 
-```text
-https://127.0.0.1:8443
+Alternative (manual AWS CLI):
+
+```bash
+aws ssm start-session --target $(terraform -chdir=terraform output -raw wazuh_instance_id) \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["127.0.0.1"],"portNumber":["443"],"localPortNumber":["8443"]}'
 ```
 
 ## Running Atomic Red Team attacks via SSM
