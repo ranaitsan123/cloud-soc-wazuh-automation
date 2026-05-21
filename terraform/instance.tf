@@ -56,6 +56,7 @@ EOF
 
   tags = {
     Name      = "wazuh-server"
+    Role      = "wazuh"
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }
@@ -66,7 +67,7 @@ resource "aws_instance" "victim_server" {
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.production_private.id
   vpc_security_group_ids = [aws_security_group.victim_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
+  iam_instance_profile   = aws_iam_instance_profile.victim_instance_profile.name
   key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   depends_on = [
@@ -95,6 +96,7 @@ EOF
   )
   tags = {
     Name      = "victim-server"
+    Role      = "victim"
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }

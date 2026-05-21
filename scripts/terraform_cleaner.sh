@@ -11,10 +11,10 @@ echo "AWS region:   $AWS_REGION"
 echo "AWS project:  $PROJECT_TAG"
 echo "Ensure this is run from your main repo workspace."
 
-# 0) Validate required tools
+# Required tools
 for cmd in terraform aws jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "ERROR: $cmd is needed" >&2
+    echo "ERROR: $cmd is required" >&2
     exit 1
   fi
 done
@@ -25,13 +25,6 @@ find_vpc_id() {
   aws ec2 describe-vpcs --region "$AWS_REGION" \
     --filters "Name=tag:Name,Values=wazuh-vpc" "Name=tag:Project,Values=${PROJECT_TAG}" \
     --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true
-}
-
-find_security_group_ids() {
-  local vpc_id="$1"
-  aws ec2 describe-security-groups --region "$AWS_REGION" \
-    --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=wazuh-sg,victim-sg,jail-sg" \
-    --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || true
 }
 
 terminate_project_instances() {
@@ -54,6 +47,7 @@ terminate_project_instances() {
 wait_for_instance_termination() {
   local vpc_id="$1"
   local attempt=0
+
   while true; do
     local ids
     ids=$(aws ec2 describe-instances --region "$AWS_REGION" \
@@ -77,117 +71,221 @@ wait_for_instance_termination() {
   done
 }
 
+cleanup_nat_gateways() {
+  local vpc_id="$1"
+  local nat_ids
+
+  nat_ids=$(aws ec2 describe-nat-gateways --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" \
+    --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null || true)
+
+  if [[ -z "${nat_ids// /}" ]]; then
+    echo "No NAT gateways found in VPC $vpc_id."
+    return 0
+  fi
+
+  for nat_id in $nat_ids; do
+    echo "Deleting NAT gateway: $nat_id"
+    aws ec2 delete-nat-gateway --region "$AWS_REGION" --nat-gateway-id "$nat_id" || true
+  done
+
+  echo "Waiting for NAT gateway deletion..."
+  sleep 30
+}
+
+cleanup_elastic_ips() {
+  local eip_ids
+  eip_ids=$(aws ec2 describe-addresses --region "$AWS_REGION" \
+    --filters "Name=tag:Project,Values=${PROJECT_TAG}" \
+    --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null || true)
+
+  if [[ -z "${eip_ids// /}" ]]; then
+    echo "No unassociated Elastic IPs found."
+    return 0
+  fi
+
+  for eip_id in $eip_ids; do
+    echo "Releasing Elastic IP: $eip_id"
+    aws ec2 release-address --region "$AWS_REGION" --allocation-id "$eip_id" || true
+  done
+}
+
 cleanup_network_interfaces() {
   local vpc_id="$1"
-  local sg_ids
-  sg_ids=$(find_security_group_ids "$vpc_id")
-  local sg_filter=""
-  if [[ -n "${sg_ids// /}" ]]; then
-    local sg_ids_csv
-    sg_ids_csv=$(echo "$sg_ids" | tr ' ' ',')
-    sg_filter="Name=group-id,Values=$sg_ids_csv"
-  fi
-
   local eni_ids
-  if [[ -n "$sg_filter" ]]; then
-    eni_ids=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-      --filters "Name=vpc-id,Values=$vpc_id" "$sg_filter" \
-      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null || true)
-  else
-    eni_ids=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-      --filters "Name=vpc-id,Values=$vpc_id" \
-      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null || true)
-  fi
+
+  eni_ids=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=status,Values=available" \
+    --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null || true)
 
   if [[ -z "${eni_ids// /}" ]]; then
-    echo "No stale network interfaces found in VPC $vpc_id."
+    echo "No orphaned ENIs found."
     return 0
   fi
 
   for eni in $eni_ids; do
-    echo "Checking network interface $eni"
-    local attachment_id
-    attachment_id=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-      --network-interface-ids "$eni" \
-      --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null || true)
-
-    if [[ -n "$attachment_id" && "$attachment_id" != "None" ]]; then
-      echo "Detaching ENI $eni (attachment $attachment_id)"
-      aws ec2 detach-network-interface --region "$AWS_REGION" --attachment-id "$attachment_id" --force || true
-      aws ec2 wait network-interface-available --region "$AWS_REGION" --network-interface-ids "$eni" || true
-    fi
-
-    echo "Deleting ENI $eni"
+    echo "Deleting ENI: $eni"
     aws ec2 delete-network-interface --region "$AWS_REGION" --network-interface-id "$eni" || true
   done
+}
+
+cleanup_route_tables() {
+  local vpc_id="$1"
+  local rt_ids
+
+  rt_ids=$(aws ec2 describe-route-tables --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=tag:Project,Values=${PROJECT_TAG}" \
+    --query 'RouteTables[].RouteTableId' --output text 2>/dev/null || true)
+
+  if [[ -z "${rt_ids// /}" ]]; then
+    echo "No custom route tables found."
+    return 0
+  fi
+
+  for rt_id in $rt_ids; do
+    local assoc_ids
+    assoc_ids=$(aws ec2 describe-route-table-associations --region "$AWS_REGION" \
+      --filters "Name=route-table-id,Values=$rt_id" \
+      --query 'Associations[?Main==false].RouteTableAssociationId' --output text 2>/dev/null || true)
+
+    for assoc_id in $assoc_ids; do
+      echo "Disassociating route table: $assoc_id"
+      aws ec2 disassociate-route-table --region "$AWS_REGION" --association-id "$assoc_id" || true
+    done
+
+    echo "Deleting route table: $rt_id"
+    aws ec2 delete-route-table --region "$AWS_REGION" --route-table-id "$rt_id" || true
+  done
+}
+
+cleanup_subnets() {
+  local vpc_id="$1"
+  local subnet_ids
+
+  subnet_ids=$(aws ec2 describe-subnets --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=tag:Project,Values=${PROJECT_TAG}" \
+    --query 'Subnets[].SubnetId' --output text 2>/dev/null || true)
+
+  if [[ -z "${subnet_ids// /}" ]]; then
+    echo "No project subnets found."
+    return 0
+  fi
+
+  for subnet_id in $subnet_ids; do
+    echo "Deleting subnet: $subnet_id"
+    aws ec2 delete-subnet --region "$AWS_REGION" --subnet-id "$subnet_id" || true
+  done
+}
+
+cleanup_internet_gateways() {
+  local vpc_id="$1"
+  local igw_ids
+
+  igw_ids=$(aws ec2 describe-internet-gateways --region "$AWS_REGION" \
+    --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+    --query 'InternetGateways[].InternetGatewayId' --output text 2>/dev/null || true)
+
+  if [[ -z "${igw_ids// /}" ]]; then
+    echo "No internet gateways found."
+    return 0
+  fi
+
+  for igw_id in $igw_ids; do
+    echo "Detaching internet gateway: $igw_id"
+    aws ec2 detach-internet-gateway --region "$AWS_REGION" --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" || true
+    echo "Deleting internet gateway: $igw_id"
+    aws ec2 delete-internet-gateway --region "$AWS_REGION" --internet-gateway-id "$igw_id" || true
+  done
+}
+
+cleanup_vpc() {
+  local vpc_id="$1"
+  if [[ -z "$vpc_id" ]]; then
+    return 0
+  fi
+
+  echo "Deleting VPC: $vpc_id"
+  aws ec2 delete-vpc --region "$AWS_REGION" --vpc-id "$vpc_id" || true
 }
 
 cleanup_security_groups() {
   local vpc_id="$1"
   local sg_ids
-  sg_ids=$(find_security_group_ids "$vpc_id")
+
+  sg_ids=$(aws ec2 describe-security-groups --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=tag:Project,Values=${PROJECT_TAG}" \
+    --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null || true)
+
   if [[ -z "${sg_ids// /}" ]]; then
-    echo "No matching project security groups found in VPC $vpc_id."
+    echo "No project security groups found."
     return 0
   fi
 
   for sgid in $sg_ids; do
-    echo "Deleting security group $sgid"
+    echo "Deleting security group: $sgid"
     aws ec2 delete-security-group --region "$AWS_REGION" --group-id "$sgid" || true
   done
+}
+
+cleanup_vpc_resources() {
+  local vpc_id="$1"
+
+  terminate_project_instances "$vpc_id"
+  wait_for_instance_termination "$vpc_id" || true
+  cleanup_nat_gateways "$vpc_id"
+  cleanup_elastic_ips
+  cleanup_network_interfaces "$vpc_id"
+  cleanup_security_groups "$vpc_id"
+  cleanup_route_tables "$vpc_id"
+  cleanup_subnets "$vpc_id"
+  cleanup_internet_gateways "$vpc_id"
+  cleanup_vpc "$vpc_id"
 }
 
 cleanup_orphaned_aws_resources() {
   local vpc_id
   vpc_id=$(find_vpc_id)
+
   if [[ -z "$vpc_id" || "$vpc_id" == "None" ]]; then
     echo "No project VPC found; skipping orphan cleanup."
     return 0
   fi
 
-  terminate_project_instances "$vpc_id"
-  wait_for_instance_termination "$vpc_id" || true
-  cleanup_network_interfaces "$vpc_id"
-  cleanup_security_groups "$vpc_id"
+  cleanup_vpc_resources "$vpc_id"
 }
 
-# 1) state info
-echo "=== Terraform state list ==="
-if terraform state list | tee /tmp/tfstate.list; then
-  echo "State entries written to /tmp/tfstate.list"
-else
-  echo "No state file or empty yet."
-fi
+show_destroy_plan() {
+  echo "=== Terraform state list ==="
+  terraform state list | tee /tmp/tfstate.list || true
 
-# 2) force destroy plan
-echo "=== Creating destroy plan ==="
-terraform plan -destroy -out=/tmp/tf-destroy.plan
-terraform show -json /tmp/tf-destroy.plan > /tmp/tf-destroy.json
+  echo "=== Creating destroy plan ==="
+  terraform plan -destroy -out=/tmp/tf-destroy.plan
 
-cat /tmp/tf-destroy.json | jq -r '.planned_values.root_module.resources[] | "\(.address) \(.type) \(.name)"' | tee /tmp/tf-destroy-resources.txt
+  echo "=== Destroy plan resources ==="
+  terraform show -json /tmp/tf-destroy.plan | jq -r '.resource_changes[] | select(.change.actions | index("delete")) | "- \(.address) \(.type)"' || true
+}
 
-echo "Destroy plan resources (preview):"
-cat /tmp/tf-destroy-resources.txt
+main() {
+  show_destroy_plan
 
-# 3) apply destroy plan
-read -p "Proceed with terraform destroy (yes/no)? " ans
-if [[ "$ans" != "yes" ]]; then
-  echo "Canceled."
-  exit 0
-fi
+  read -p "Proceed with terraform destroy (yes/no)? " ans
+  if [[ "$ans" != "yes" ]]; then
+    echo "Canceled."
+    exit 0
+  fi
 
-echo "Applying destroy plan..."
-if terraform apply -auto-approve /tmp/tf-destroy.plan; then
-  echo "Terraform destroy completed."
-else
-  echo "Terraform destroy failed. Attempting automated cleanup of AWS dependency blockers..."
+  echo "Applying terraform destroy plan..."
+  if terraform apply -auto-approve /tmp/tf-destroy.plan; then
+    echo "Terraform destroy completed successfully."
+  else
+    echo "Terraform destroy failed. Performing cleanup and retrying..."
+    cleanup_orphaned_aws_resources
+    terraform destroy -auto-approve || true
+  fi
+
+  echo "=== AWS orphan cleanup check ==="
   cleanup_orphaned_aws_resources
+  echo "Done cleanup helper."
+}
 
-  echo "Retrying terraform destroy after cleanup..."
-  terraform destroy -auto-approve || true
-fi
-
-echo "=== AWS orphan cleanup check ==="
-cleanup_orphaned_aws_resources
-
-echo "Done cleanup helper."
+main

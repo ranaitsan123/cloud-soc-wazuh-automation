@@ -42,7 +42,7 @@ variable "allowed_ssh_cidr" {
 variable "prevent_destroy" {
   type        = bool
   description = "If true, resources are protected from destroy (use with caution)."
-  default     = false
+  default     = true
 }
 
 variable "ecr_victim_repository_name" {

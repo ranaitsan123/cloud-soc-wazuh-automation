@@ -1,20 +1,20 @@
 variable "s3_bucket_name" {
   type        = string
-  description = "S3 bucket name for SOC assets. Must be globally unique."
-  default     = "cloud-soc-wazuh-assets"
+  description = "S3 bucket name for SOC assets. If empty, a unique bucket name is generated using the AWS account ID."
+  default     = ""
 }
 
 resource "aws_s3_bucket" "wazuh_assets" {
-  bucket = var.s3_bucket_name
+  bucket = local.asset_bucket_name
 
   tags = {
-    Name      = "cloud-soc-wazuh-assets"
+    Name      = local.asset_bucket_name
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }
 
   lifecycle {
-    prevent_destroy = false
+    prevent_destroy = var.prevent_destroy
   }
 }
 
