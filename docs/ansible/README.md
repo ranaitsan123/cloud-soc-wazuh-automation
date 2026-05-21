@@ -89,50 +89,16 @@ aws ssm start-session --target $(terraform -chdir=terraform output -raw wazuh_in
 
 ## Running Atomic Red Team attacks via SSM
 
-A helper script is available in `scripts/run-atomic-attack.sh`.
+The victim image includes the Atomic Red Team assets under `/opt/fortress/atomics` and the PowerShell `Invoke-AtomicRedTeam` module.
 
-### What it does
+This repository's preferred workflow is to run remote actions via Ansible executed over SSM from the Python orchestration layer. Instead of a local helper script, use the orchestrator to run an Ansible task or ad-hoc command on the Victim instance through the `AWS-RunShellScript` document.
 
-- resolves the victim EC2 instance ID from Terraform outputs
-- sends an SSM `AWS-RunShellScript` command to the victim instance
-- executes `docker exec victim-art pwsh -NoLogo -NonInteractive -Command "Invoke-AtomicTest ..."`
-- waits for the SSM command to complete and prints stdout/stderr
+Recommended options:
 
-### Run an attack
+- Use the Python CLI orchestrator to run a dedicated Ansible play or ad-hoc task that executes `pwsh -Command "Invoke-AtomicTest <TECHNIQUE> -PathToAtomics /opt/fortress/atomics"` inside the `victim-art` container.
+- Create an Ansible task that uses the `command` or `shell` module and execute the task remotely via the orchestrator's SSM runner.
 
-From the repository root:
-
-```bash
-bash scripts/run-atomic-attack.sh
-```
-
-This runs the default technique:
-
-```bash
-Invoke-AtomicTest T1053.005 -PathToAtomics /opt/fortress/atomics
-```
-
-### Customize the attack
-
-Run a different technique:
-
-```bash
-bash scripts/run-atomic-attack.sh -t T1059.001
-```
-
-Use a custom path to the atomics folder:
-
-```bash
-bash scripts/run-atomic-attack.sh -p /opt/fortress/atomics
-```
-
-Send a custom shell command directly:
-
-```bash
-bash scripts/run-atomic-attack.sh -c 'docker exec victim-art sh -c "echo hello"'
-```
-
-If the script completes, the attack command was delivered via SSM and you can verify detection in Wazuh.
+If you'd like, the orchestrator can be extended to provide a convenience command to trigger Atomic Red Team techniques; open an issue or a PR with your preferred UX.
 
 ## Notes
 
