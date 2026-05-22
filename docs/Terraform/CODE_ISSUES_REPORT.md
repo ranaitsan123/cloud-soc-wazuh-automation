@@ -2,6 +2,8 @@
 
 This report summarizes non-syntactic, logic-level issues found in the current repository code related to Terraform, Python orchestration, and Ansible deployment.
 
+> Update: the latest changes now support a local Terraform backend by default when S3 backend values are not supplied, and inventory hosts are generated with SSM connection settings for remote EC2 execution.
+
 ## 1. Terraform backend configuration is incomplete
 
 - `terraform/backend.tf` declares:

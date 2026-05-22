@@ -99,23 +99,3 @@ resource "aws_security_group" "victim_sg" {
     ManagedBy = "terraform"
   }
 }
-
-resource "aws_security_group" "jail_sg" {
-  name_prefix = "jail-sg-"
-  description = "Jail security group for isolated instances"
-  vpc_id      = aws_vpc.wazuh_vpc.id
-
-  ingress = []
-
-  egress = []
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name      = "jail-sg"
-    Project   = "cloud-soc"
-    ManagedBy = "terraform"
-  }
-}

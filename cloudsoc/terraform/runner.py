@@ -24,16 +24,23 @@ class TerraformRunner:
     Wraps subprocess calls with logging, error handling, and state management.
     """
 
-    def __init__(self, terraform_dir: Path, auto_approve: bool = False):
+    def __init__(
+        self,
+        terraform_dir: Path,
+        auto_approve: bool = False,
+        backend_config: Optional[Dict[str, str]] = None,
+    ):
         """
         Initialize Terraform runner.
 
         Args:
             terraform_dir: Path to Terraform directory
             auto_approve: Automatically approve apply operations
+            backend_config: Optional Terraform backend configuration values
         """
         self.terraform_dir = Path(terraform_dir)
         self.auto_approve = auto_approve
+        self.backend_config = backend_config or {}
 
         if not self.terraform_dir.exists():
             raise ValueError(f"Terraform directory not found: {terraform_dir}")
@@ -50,6 +57,35 @@ class TerraformRunner:
         cmd = ["terraform", "init", "-input=false"]
         if upgrade:
             cmd.append("-upgrade")
+
+        backend_override_path = self.terraform_dir / ".backend_override.tf"
+        use_s3_backend = bool(
+            self.backend_config.get("bucket") and self.backend_config.get("key")
+        )
+
+        if use_s3_backend:
+            backend_override_path.write_text(
+                'terraform {\n  backend "s3" {}\n}\n'
+            )
+        elif backend_override_path.exists():
+            backend_override_path.unlink()
+
+        if self.backend_config:
+            if any(
+                self.backend_config.get(k)
+                for k in ["bucket", "key", "region", "dynamodb_table"]
+            ) and not use_s3_backend:
+                logger.error(
+                    "Terraform backend config is incomplete: set TERRAFORM_BACKEND_BUCKET and TERRAFORM_BACKEND_KEY."
+                )
+                raise TerraformStateError(
+                    "Terraform backend config is missing required values: bucket and key."
+                )
+
+        if use_s3_backend:
+            for key, value in self.backend_config.items():
+                if value:
+                    cmd.extend(["-backend-config", f"{key}={value}"])
 
         try:
             self._run(cmd)

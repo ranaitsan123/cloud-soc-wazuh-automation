@@ -41,17 +41,17 @@ class InventoryGenerator:
         group_hosts: Dict[str, List[str]] = {"wazuh": [], "victims": []}
 
         for instance in instances:
-            ip = instance.private_ip or instance.public_ip
-            if not ip:
-                logger.warning(f"Skipping instance {instance.id} because it has no reachable IP")
-                continue
-
             name = instance.tags.get("Name", "").lower()
             role = instance.tags.get("Role", "").lower()
+            host_entry = (
+                f"{instance.id} ansible_connection=amazon.aws.aws_ssm "
+                "ansible_python_interpreter=/usr/bin/python3"
+            )
+
             if "wazuh" in name or "wazuh" in role or "manager" in name or "manager" in role:
-                group_hosts["wazuh"].append(ip)
+                group_hosts["wazuh"].append(host_entry)
             else:
-                group_hosts["victims"].append(ip)
+                group_hosts["victims"].append(host_entry)
 
         if not any(group_hosts.values()):
             raise OrchestrationError("Inventory generation did not discover any hosts")
@@ -76,9 +76,18 @@ class DeploymentOrchestrator:
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
+        backend_config = {
+            "bucket": self.settings.project.terraform.backend_bucket,
+            "key": self.settings.project.terraform.backend_key,
+            "region": self.settings.project.terraform.backend_region,
+        }
+        if self.settings.project.terraform.backend_dynamodb_table:
+            backend_config["dynamodb_table"] = self.settings.project.terraform.backend_dynamodb_table
+
         self.tf_runner = TerraformRunner(
             terraform_dir=self.settings.project.terraform.dir,
-            auto_approve=self.settings.project.terraform.auto_approve
+            auto_approve=self.settings.project.terraform.auto_approve,
+            backend_config=backend_config,
         )
         self.ec2_service = EC2Service(
             region=self.settings.project.aws.region,
