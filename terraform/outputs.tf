@@ -52,6 +52,11 @@ output "ecr_manager_repository_url" {
   value = aws_ecr_repository.manager_repo.repository_url
 }
 
+output "s3_prefix" {
+  value       = "wazuh-docker"
+  description = "Key prefix under the asset bucket for Wazuh Docker and config assets."
+}
+
 # ECR output commented out as ECR is disabled for now
 # output "ecr_repository_url" {
 #   value = aws_ecr_repository.wazuh_repo.repository_url

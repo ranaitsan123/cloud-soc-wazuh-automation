@@ -134,6 +134,50 @@ resource "aws_iam_role_policy_attachment" "attach_victim_ssm_managed" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_policy" "victim_ec2_policy" {
+  name        = "victim-ec2-policy"
+  description = "Permissions for Victim instance to pull images from ECR."
+
+  tags = {
+    Name      = "victim-ec2-policy"
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid = "ECRAuthToken"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = ["*"]
+      },
+      {
+        Sid = "ECRImagePull"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories"
+        ]
+        Resource = [
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.ecr_victim_repository_name}"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_victim_policy" {
+  role       = aws_iam_role.victim_ec2_role.name
+  policy_arn = aws_iam_policy.victim_ec2_policy.arn
+}
+
 resource "aws_iam_instance_profile" "wazuh_instance_profile" {
   name = "wazuh-instance-profile"
   role = aws_iam_role.wazuh_ec2_role.name
