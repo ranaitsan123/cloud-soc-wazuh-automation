@@ -103,6 +103,46 @@ def dashboard(
         raise typer.Exit(code=1)
 
 
+@app.command("import")
+def import_resource(
+    resource_address: str = typer.Argument(
+        ...,
+        help="Terraform resource address, e.g. aws_vpc.wazuh_vpc"
+    ),
+    resource_id: str = typer.Argument(
+        ...,
+        help="Existing AWS resource ID, e.g. vpc-0123456789abcdef0"
+    ),
+) -> None:
+    """Import an existing AWS resource into Terraform state."""
+    settings = get_settings()
+
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Terraform Import[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        tf_runner = TerraformRunner(terraform_dir=settings.project.terraform.dir)
+        tf_runner.init()
+        tf_runner.import_resource(resource_address, resource_id)
+        console.print(
+            Panel(
+                f"[bold green]✓ Imported {resource_address} into Terraform state[/bold green]",
+                expand=False
+            )
+        )
+    except TerraformStateError as e:
+        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def destroy(
     auto_approve: bool = typer.Option(

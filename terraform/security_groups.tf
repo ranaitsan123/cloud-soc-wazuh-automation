@@ -1,5 +1,5 @@
 resource "aws_security_group" "wazuh_sg" {
-  name_prefix = "wazuh-sg-"
+  name        = "wazuh-sg"
   description = "Wazuh Manager security group"
   vpc_id      = aws_vpc.wazuh_vpc.id
 
@@ -62,7 +62,7 @@ resource "aws_security_group" "wazuh_sg" {
 }
 
 resource "aws_security_group" "victim_sg" {
-  name_prefix = "victim-sg-"
+  name        = "victim-sg"
   description = "Victim instance security group"
   vpc_id      = aws_vpc.wazuh_vpc.id
 

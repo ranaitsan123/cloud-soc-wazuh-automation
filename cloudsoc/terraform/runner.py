@@ -268,6 +268,15 @@ class TerraformRunner:
         outputs = self.output()
         return outputs.get(key, {}).get("value")
 
+    def state_contains(self, address: str) -> bool:
+        """Return whether a Terraform state contains the given resource address."""
+        try:
+            result = self._run(["terraform", "state", "list"], capture_output=True)
+            return address in result.stdout.splitlines()
+        except ShellCommandError as e:
+            logger.warning(f"Failed to inspect Terraform state for {address}: {e}")
+            return False
+
     def show_state(self) -> None:
         """Display current Terraform state (for debugging)."""
         logger.info("[terraform show]")

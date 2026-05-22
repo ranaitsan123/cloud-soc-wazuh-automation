@@ -24,6 +24,10 @@ class TerraformConfig(BaseModel):
     dir: Path = Field(default=Path("terraform"))
     auto_approve: bool = Field(default=False)
     var_files: list = Field(default_factory=list)
+    backend_bucket: str = Field(default="")
+    backend_key: str = Field(default="")
+    backend_region: str = Field(default="")
+    backend_dynamodb_table: Optional[str] = Field(default=None)
 
     class Config:
         """Pydantic config"""
@@ -81,7 +85,11 @@ def load_settings() -> Settings:
         environment=os.getenv("ENVIRONMENT", "dev"),
         aws=aws_config,
         terraform=TerraformConfig(
-            dir=Path(os.getenv("TERRAFORM_DIR", "terraform"))
+            dir=Path(os.getenv("TERRAFORM_DIR", "terraform")),
+            backend_bucket=os.getenv("TERRAFORM_BACKEND_BUCKET", ""),
+            backend_key=os.getenv("TERRAFORM_BACKEND_KEY", ""),
+            backend_region=os.getenv("TERRAFORM_BACKEND_REGION", ""),
+            backend_dynamodb_table=os.getenv("TERRAFORM_BACKEND_DYNAMODB_TABLE", None),
         )
     )
 

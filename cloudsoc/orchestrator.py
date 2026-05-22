@@ -10,6 +10,7 @@ from rich.panel import Panel
 
 from cloudsoc.ansible.deploy import AnsibleService
 from cloudsoc.aws.ec2 import EC2Service
+from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.config.settings import Settings, get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
@@ -93,6 +94,7 @@ class DeploymentOrchestrator:
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
         )
+        self.iam_service = IAMService(profile=self.settings.project.aws.profile)
         self.ssm_service = SSMService(
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
@@ -103,6 +105,7 @@ class DeploymentOrchestrator:
     def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
         """Apply infrastructure and perform post-apply orchestration."""
         self.tf_runner.init()
+        self._ensure_iam_resources_imported()
         self.tf_runner.validate()
         plan_file = self.tf_runner.plan(var_files=var_files or [])
         self.tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
@@ -113,11 +116,52 @@ class DeploymentOrchestrator:
         self._validate_deployment()
         self._print_dashboard_instructions()
 
+    def _ensure_iam_resources_imported(self) -> None:
+        """Import existing IAM resources into Terraform state if they already exist."""
+        known_iam_resources = [
+            ("aws_iam_role.wazuh_ec2_role", "wazuh-ec2-role", "role"),
+            ("aws_iam_role.victim_ec2_role", "victim-ec2-role", "role"),
+            ("aws_iam_policy.wazuh_ec2_policy", "wazuh-ec2-policy", "policy"),
+            ("aws_iam_policy.victim_ec2_policy", "victim-ec2-policy", "policy"),
+            ("aws_iam_instance_profile.wazuh_instance_profile", "wazuh-instance-profile", "instance_profile"),
+            ("aws_iam_instance_profile.victim_instance_profile", "victim-instance-profile", "instance_profile"),
+        ]
+
+        for address, name, resource_type in known_iam_resources:
+            if self.tf_runner.state_contains(address):
+                logger.debug(f"Terraform state already contains {address}")
+                continue
+
+            resource_id = None
+            if resource_type == "role":
+                role = self.iam_service.get_role(name)
+                resource_id = role.name if role else None
+            elif resource_type == "policy":
+                resource_id = self.iam_service.get_policy_arn(name)
+            elif resource_type == "instance_profile":
+                profile = self.iam_service.get_instance_profile(name)
+                resource_id = profile.get("InstanceProfileName") if profile else None
+
+            if resource_id:
+                logger.info(f"Found existing IAM resource {name}, importing {address} into Terraform state")
+                self.tf_runner.import_resource(address, resource_id)
+            else:
+                logger.debug(f"No existing IAM {resource_type} found for {name}; Terraform will create it")
+
     def open_dashboard(self, local_port: int = 8443, remote_port: int = 443) -> None:
         """Open an SSM port-forwarding tunnel to the Wazuh dashboard."""
         instance_id = self._get_wazuh_instance_id()
         if not instance_id:
             raise OrchestrationError("Wazuh instance ID could not be determined for dashboard access")
+
+        if not self.ssm_service.wait_for_instance(instance_id, timeout=120, poll_interval=10):
+            raise OrchestrationError("SSM agent is not online for the Wazuh instance")
+
+        dashboard_ready = self._monitor_dashboard_service(instance_id, remote_port)
+        if dashboard_ready:
+            status_message = "Wazuh dashboard service is responsive on the instance."
+        else:
+            status_message = "Warning: Wazuh dashboard service did not respond on the remote instance. The tunnel will still be opened if possible."
 
         command = [
             "aws",
@@ -138,6 +182,7 @@ class DeploymentOrchestrator:
         console.print(
             Panel(
                 f"[bold green]Dashboard tunneling started[/bold green]\n\n"
+                f"{status_message}\n\n"
                 f"Open [bold]https://127.0.0.1:{local_port}[/bold] in your browser.\n"
                 "Use Ctrl+C to stop the session.",
                 title="Wazuh Dashboard",
@@ -149,6 +194,36 @@ class DeploymentOrchestrator:
             run_command(command)
         except ShellCommandError as e:
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
+
+    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> bool:
+        """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
+        command = [
+            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port}"
+        ]
+        command_id = self.ssm_service.send_command(
+            instance_ids=[instance_id],
+            commands=command,
+            working_directory="/tmp",
+            timeout=60,
+            document_name="AWS-RunShellScript"
+        )
+
+        if not command_id:
+            logger.warning("Unable to send dashboard health check command via SSM")
+            return False
+
+        invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=90, poll_interval=5)
+        if not invocation:
+            logger.warning("Dashboard health check command did not complete")
+            return False
+
+        if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
+            logger.warning(
+                f"Dashboard health check failed: status={invocation.get('status')} return_code={invocation.get('return_code')}"
+            )
+            return False
+
+        return invocation.get("output", "") == "200"
 
     def _wait_for_ssm_ready(self) -> None:
         instance_ids = self._get_instance_ids()
@@ -205,6 +280,36 @@ class DeploymentOrchestrator:
             outputs.get("victim_instance_id", {}).get("value"),
         ]
         return [instance_id for instance_id in ids if instance_id]
+
+    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> bool:
+        """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
+        command = [
+            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port}"
+        ]
+        command_id = self.ssm_service.send_command(
+            instance_ids=[instance_id],
+            commands=command,
+            working_directory="/tmp",
+            timeout=60,
+            document_name="AWS-RunShellScript"
+        )
+
+        if not command_id:
+            logger.warning("Unable to send dashboard health check command via SSM")
+            return False
+
+        invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=90, poll_interval=5)
+        if not invocation:
+            logger.warning("Dashboard health check command did not complete")
+            return False
+
+        if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
+            logger.warning(
+                f"Dashboard health check failed: status={invocation.get('status')} return_code={invocation.get('return_code')}"
+            )
+            return False
+
+        return invocation.get("output", "") == "200"
 
     def _get_wazuh_instance_id(self) -> Optional[str]:
         outputs = self.tf_runner.output()

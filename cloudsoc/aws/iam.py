@@ -49,6 +49,46 @@ class IAMService:
                 self.logger.error(f"Failed to get role {role_name}: {e}")
             return None
 
+    def get_policy_arn(self, policy_name: str) -> Optional[str]:
+        """
+        Get the ARN for an IAM policy by name.
+
+        Args:
+            policy_name: Name of the policy
+
+        Returns:
+            Policy ARN if found, otherwise None
+        """
+        try:
+            paginator = self.client.get_paginator("list_policies")
+            for page in paginator.paginate(Scope="Local"):
+                for policy_data in page.get("Policies", []):
+                    if policy_data.get("PolicyName") == policy_name:
+                        return policy_data.get("Arn")
+        except ClientError as e:
+            self.logger.error(f"Failed to list IAM policies: {e}")
+        return None
+
+    def get_instance_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get an IAM instance profile by name.
+
+        Args:
+            profile_name: Name of the instance profile
+
+        Returns:
+            Instance profile data if found, otherwise None
+        """
+        try:
+            response = self.client.get_instance_profile(InstanceProfileName=profile_name)
+            return response.get("InstanceProfile")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchEntity":
+                self.logger.debug(f"Instance profile not found: {profile_name}")
+            else:
+                self.logger.error(f"Failed to get instance profile {profile_name}: {e}")
+            return None
+
     def list_roles(self, path_prefix: str = "/") -> List[IAMRole]:
         """
         List IAM roles.

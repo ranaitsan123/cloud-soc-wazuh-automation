@@ -96,6 +96,43 @@ class SSMService:
             self.logger.error(f"Failed to get command invocation: {e}")
             return None
 
+    def wait_for_command(
+        self,
+        command_id: str,
+        instance_id: str,
+        timeout: int = 120,
+        poll_interval: int = 5
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Wait for an SSM command invocation to complete.
+
+        Args:
+            command_id: Command ID
+            instance_id: Instance ID
+            timeout: Timeout in seconds
+            poll_interval: Polling interval in seconds
+
+        Returns:
+            Command invocation result or None
+        """
+        import time
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            invocation = self.get_command_invocation(command_id, instance_id)
+            if invocation is None:
+                return None
+
+            status = invocation.get("status")
+            if status in ["Success", "Failed", "Cancelled", "TimedOut"]:
+                return invocation
+
+            self.logger.info(f"Waiting for SSM command {command_id} to complete...")
+            time.sleep(poll_interval)
+
+        self.logger.warning(f"SSM command {command_id} did not complete within {timeout} seconds")
+        return None
+
     def put_parameter(
         self,
         name: str,
