@@ -20,7 +20,9 @@ class AnsibleService:
         """
         self.playbooks_dir = Path(playbooks_dir)
         self.roles_path = self.playbooks_dir.parent / "roles"
+        self.requirements_file = self.playbooks_dir.parent / "requirements.yml"
         self.logger = logger
+        self._collections_installed = False
 
     def run_playbook(
         self,
@@ -43,6 +45,10 @@ class AnsibleService:
         Returns:
             True if successful
         """
+        # Ensure collections are installed before running playbooks
+        if not self._collections_installed:
+            self._install_collections()
+
         playbook_path = self.playbooks_dir / playbook_name
 
         if not playbook_path.exists():
@@ -62,9 +68,13 @@ class AnsibleService:
         if inventory:
             cmd.extend(["-i", inventory])
 
-        env = None
+        env = os.environ.copy()
+
+        ansible_config = Path("ansible.cfg")
+        if ansible_config.exists():
+            env["ANSIBLE_CONFIG"] = str(ansible_config.resolve())
+
         if self.roles_path.exists():
-            env = os.environ.copy()
             env["ANSIBLE_ROLES_PATH"] = str(self.roles_path)
 
         if extra_vars:
@@ -90,6 +100,34 @@ class AnsibleService:
     def _resolve_ansible_playbook(self) -> Optional[str]:
         """Resolve the ansible-playbook executable path."""
         return shutil.which("ansible-playbook")
+
+    def _install_collections(self) -> None:
+        """Install Ansible collections from requirements.yml."""
+        if not self.requirements_file.exists():
+            self.logger.debug(f"No requirements file found at {self.requirements_file}")
+            self._collections_installed = True
+            return
+
+        ansible_galaxy = shutil.which("ansible-galaxy")
+        if not ansible_galaxy:
+            self.logger.warning(
+                "ansible-galaxy not found. Skipping collection installation. "
+                "Some playbooks may fail if required collections are missing."
+            )
+            self._collections_installed = True
+            return
+
+        try:
+            self.logger.info("Installing Ansible collections...")
+            cmd = [ansible_galaxy, "collection", "install", "-r", str(self.requirements_file)]
+            run_command(cmd)
+            self.logger.debug("✓ Ansible collections installed successfully")
+            self._collections_installed = True
+        except ShellCommandError as e:
+            self.logger.warning(f"Failed to install Ansible collections: {e}")
+            # Continue anyway, as some collections might already be installed
+            self._collections_installed = True
+
 
     def run_task(
         self,
