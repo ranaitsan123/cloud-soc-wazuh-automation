@@ -14,6 +14,7 @@ from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.config.settings import Settings, get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
+from cloudsoc.terraform.imports import ResourceImporter
 from cloudsoc.utils.logger import logger
 from cloudsoc.utils.shell import run_command, ShellCommandError
 
@@ -105,7 +106,7 @@ class DeploymentOrchestrator:
     def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
         """Apply infrastructure and perform post-apply orchestration."""
         self.tf_runner.init()
-        self._ensure_iam_resources_imported()
+        self._import_all_existing_resources()
         self.tf_runner.validate()
         plan_file = self.tf_runner.plan(var_files=var_files or [])
         self.tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
@@ -116,37 +117,18 @@ class DeploymentOrchestrator:
         self._validate_deployment()
         self._print_dashboard_instructions()
 
-    def _ensure_iam_resources_imported(self) -> None:
-        """Import existing IAM resources into Terraform state if they already exist."""
-        known_iam_resources = [
-            ("aws_iam_role.wazuh_ec2_role", "wazuh-ec2-role", "role"),
-            ("aws_iam_role.victim_ec2_role", "victim-ec2-role", "role"),
-            ("aws_iam_policy.wazuh_ec2_policy", "wazuh-ec2-policy", "policy"),
-            ("aws_iam_policy.victim_ec2_policy", "victim-ec2-policy", "policy"),
-            ("aws_iam_instance_profile.wazuh_instance_profile", "wazuh-instance-profile", "instance_profile"),
-            ("aws_iam_instance_profile.victim_instance_profile", "victim-instance-profile", "instance_profile"),
-        ]
-
-        for address, name, resource_type in known_iam_resources:
-            if self.tf_runner.state_contains(address):
-                logger.debug(f"Terraform state already contains {address}")
-                continue
-
-            resource_id = None
-            if resource_type == "role":
-                role = self.iam_service.get_role(name)
-                resource_id = role.name if role else None
-            elif resource_type == "policy":
-                resource_id = self.iam_service.get_policy_arn(name)
-            elif resource_type == "instance_profile":
-                profile = self.iam_service.get_instance_profile(name)
-                resource_id = profile.get("InstanceProfileName") if profile else None
-
-            if resource_id:
-                logger.info(f"Found existing IAM resource {name}, importing {address} into Terraform state")
-                self.tf_runner.import_resource(address, resource_id)
-            else:
-                logger.debug(f"No existing IAM {resource_type} found for {name}; Terraform will create it")
+    def _import_all_existing_resources(self) -> None:
+        """Import all existing AWS resources into Terraform state to prevent recreation."""
+        try:
+            importer = ResourceImporter(
+                tf_runner=self.tf_runner,
+                settings=self.settings
+            )
+            importer.import_all_existing_resources()
+            logger.info("✓ Resource import check completed")
+        except Exception as e:
+            logger.warning(f"Resource import encountered an issue (non-critical): {e}")
+            logger.info("Proceeding with deployment - Terraform will handle creation of missing resources")
 
     def open_dashboard(self, local_port: int = 8443, remote_port: int = 443) -> None:
         """Open an SSM port-forwarding tunnel to the Wazuh dashboard."""

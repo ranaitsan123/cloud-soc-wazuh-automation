@@ -179,3 +179,26 @@ class S3Service:
         except ClientError as e:
             self.logger.error(f"Failed to delete bucket {name}: {e}")
             return False
+
+    def get_bucket_tags(self, name: str) -> Dict[str, str]:
+        """
+        Get tags for a bucket.
+
+        Args:
+            name: Bucket name
+
+        Returns:
+            Dictionary of tags
+        """
+        try:
+            response = self.client.get_bucket_tagging(Bucket=name)
+            return {
+                tag["Key"]: tag["Value"]
+                for tag in response.get("TagSet", [])
+            }
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchTagSet":
+                self.logger.debug(f"Bucket {name} has no tags")
+                return {}
+            self.logger.warning(f"Failed to get tags for bucket {name}: {e}")
+            return {}
