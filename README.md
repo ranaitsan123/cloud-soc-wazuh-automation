@@ -1,4 +1,4 @@
-# ☁️ Cloud SOC – Wazuh Threat Detection & Automated Response
+# ☁️ Cloud SOC – Wazuh Threat Detection & Python Orchestrator
 
 <div align="center">
 
@@ -8,592 +8,241 @@
 ![Docker](https://img.shields.io/badge/Docker-Compose-blue?style=flat-square&logo=docker)
 ![Python](https://img.shields.io/badge/Python-3.8%2B-green?style=flat-square&logo=python)
 ![AWS](https://img.shields.io/badge/AWS-Enabled-orange?style=flat-square&logo=amazonaws)
-![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
-
-*A cloud-native Security Operations Center (SOC) with threat detection, log analysis, and automated incident response*
-
-[Documentation](#-documentation) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Contributing](#-contribution)
+![Status](https://img.shields.io/github/workflow/status/ranaitsan123/cloud-soc-wazuh-automation/refactor/python-orchestrator?style=flat-square)
 
 </div>
 
----
-
-## 📌 Overview
-
-This project implements a **production-ready, cloud-based Security Operations Center (SOC)** designed to detect, analyze, and respond to security threats in real time.
-
-It combines **cloud infrastructure, SIEM, attack simulation, and DevSecOps automation** to create a modern cybersecurity monitoring environment that bridges theory and practical implementation.
-
-**Key Values:**
-- 🛡️ **Real-time threat detection** using Wazuh
-- 🔄 **Automated incident response** via Python + AWS SDK
-- 🏗️ **Infrastructure as Code** with Terraform
-- 📊 **Centralized log management** and analysis
-- 🧪 **Attack simulation** for validation (Atomic Red Team, Caldera)
-- 🔁 **Reproducible and scalable** cloud architecture
+> **Branch-specific README:** This document is oriented to the `refactor/python-orchestrator` branch and describes the Python-based orchestration platform implemented in this branch.
 
 ---
 
-## 🎯 Objectives
+## 🚀 Branch Overview
 
-✅ Centralize system and network logs  
-✅ Detect malicious activities (SSH brute force, abnormal behavior, privilege escalation)  
-✅ Generate real-time security alerts  
-✅ Automate incident response workflows  
-✅ Reduce Mean Time To Response (MTTR)  
-✅ Build a reproducible and scalable cloud security architecture  
-✅ Demonstrate DevSecOps principles in action  
+This branch refactors the repository around a **Python orchestration platform** for AWS infrastructure and Wazuh SOC deployment.
 
----
+Key goals:
 
-## 🏗️ Architecture
+- Replace legacy Bash orchestration with a typed Python CLI
+- Use **Typer** for CLI command handling
+- Wrap Terraform with `cloudsoc/terraform/runner.py`
+- Use **Boto3** service wrappers for AWS discovery
+- Generate Ansible inventory for **SSM-driven** configuration
+- Support safe AWS resource import into Terraform state
+- Provide a unified entrypoint: `cloud-soc`
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         AWS Cloud                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │   EC2        │  │   EC2        │  │   EC2        │          │
-│  │ (Protected)  │  │ (Protected)  │  │ (Protected)  │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-│         ▲                 ▲                  ▲                   │
-│         │ Wazuh Agents   │ Wazuh Agents    │ Wazuh Agents      │
-│         └─────────────────┴──────────────────┘                  │
-│                           │                                     │
-│                    ┌──────▼──────┐                             │
-│                    │ Wazuh       │                             │
-│                    │ Manager &   │                             │
-│                    │ Indexer     │                             │
-│                    │ (Docker)    │                             │
-│                    └──────┬──────┘                             │
-│                           │                                     │
-│                    ┌──────▼──────┐                             │
-│                    │ OpenSearch  │                             │
-│                    │ Dashboard   │                             │
-│                    │ (Wazuh UI)  │                             │
-│                    └─────────────┘                             │
-└─────────────────────────────────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────┐
-                    │  Automation     │
-                    │  Python Scripts │
-                    │  (Boto3)        │
-                    └─────────────────┘
-```
+## 📌 What This Branch Contains
 
-**Core Components:**
-- **Cloud Infrastructure** → AWS (EC2, VPC, Security Groups, IAM, S3, ECR)
-- **SIEM Platform** → Wazuh (Manager, Indexer, Dashboard)
-- **Containerization** → Docker & Docker Compose
-- **Infrastructure as Code** → Terraform
-- **Automation & Response** → Python (Boto3)
-- **Attack Simulation** → Atomic Red Team, MITRE Caldera
+- `cloudsoc/main.py` — Typer CLI entrypoint
+- `cloudsoc/orchestrator.py` — deployment orchestration and dashboard helpers
+- `cloudsoc/terraform/runner.py` — Terraform wrapper and state management
+- `cloudsoc/terraform/imports.py` — automatic AWS resource discovery/import
+- `cloudsoc/aws/` — wrappers for EC2, IAM, S3, ECR, SSM
+- `cloudsoc/ansible/deploy.py` — Ansible orchestration support
+- `cloudsoc/cleanup/services.py` — cleanup helpers for VPC and networking
+- `cloudsoc/config/settings.py` — `.env` configuration management
+- `terraform/` — infrastructure-as-code definitions
+- `ansible/` — runtime service configuration playbooks
+- `docs/` — branch-aligned documentation
 
----
+## ✅ Branch Key Features
 
-## ⚙️ Features
+- **Python CLI Orchestration**: all deploy actions use `cloud-soc`
+- **Terraform automation**: init, validate, plan, apply, destroy
+- **Safe resource import**: existing AWS resources are detected and imported before apply
+- **Infrastructure status**: `cloud-soc status` reports VPC/subnet/instance details
+- **SSM dashboard access**: `cloud-soc dashboard`
+- **Dynamic Ansible inventory**: generated from EC2 discovery
+- **Unified branch docs**: docs are aligned with this refactor branch
 
-### 🔹 Infrastructure Automation
-- ✅ Fully automated AWS deployment using **Terraform**
-- ✅ Reproducible and scalable environment
-- ✅ Infrastructure orchestration through the `cloud-soc` Python CLI
-- ✅ Centralized configuration management (S3, ECR)
-- ✅ IAM best practices with minimal privilege policies
-
-### 🔹 Log Collection & Monitoring
-- ✅ Wazuh agents deployed on monitored machines (EC2 instances)
-- ✅ Centralized log aggregation via Wazuh Manager
-- ✅ Real-time visualization via Wazuh Dashboard
-- ✅ Automated container deployment and orchestration
-
-### 🔹 Threat Detection
-- ✅ Detection of:
-  - SSH brute force attacks (T1110)
-  - Suspicious command execution (T1059)
-  - System anomalies & privilege escalation (T1068)
-  - Unauthorized access attempts
-- ✅ Custom detection rules
-- ✅ Correlation with MITRE ATT&CK framework
-
-### 🔹 Attack Simulation
-- ✅ Unit attack testing with **Atomic Red Team**
-- ✅ Advanced adversary simulation with **MITRE Caldera**
-- ✅ Reproducible attack scenarios
-
-### 🔹 Automated Incident Response
-- ✅ Integration with Wazuh Active Response
-- ✅ Python scripts using AWS SDK (Boto3)
-- ✅ Automatic actions:
-  - Blocking malicious IPs
-  - Isolating compromised instances (Security Groups)
-  - Triggering CloudWatch alarms
-  - Logging incidents to S3
-
----
-
-## 📂 Repository Structure
-
-```
-cloud-soc-wazuh-automation/
-│
-├── 📄 docker-compose.yml          # Global SOC orchestration
-├── 📄 terraform.tfstate           # Terraform state (AWS resources)
-│
-├── 📁 terraform/                  # Infrastructure as Code
-│   ├── providers.tf               # AWS provider configuration
-│   ├── variables.tf               # Input variables
-│   ├── main.tf / *.tf             # Resource definitions
-│   └── (Terraform configuration executed by `cloud-soc` CLI)
-│
-├── 📁 wazuh-docker/               # Wazuh SIEM deployment
-│   ├── docker-compose.yml         # Wazuh services orchestration
-│   ├── generate-indexer-certs.yml # Certificate generation
-│   └── config/                    # Configuration files
-│       ├── wazuh_manager.conf
-│       ├── opensearch_dashboards.yml
-│       └── wazuh.indexer.yml
-│
-├── 📁 docker/                     # Custom Docker images
-│   └── Dockerfile
-│
-├── 📁 automation/                 # Incident response scripts
-│   ├── isolate_vm.py              # VM isolation (Security Group)
-│   └── README.md
-│
-├── 📁 attack-scenarios/           # Attack testing scenarios
-│   ├── atomic_red_team_tests.yml
-│   └── README.md
-│
-├── 📁 scripts/                    # Utility scripts
-│   └── terraform_history_report.sh
-│
-├── 📁 docs/                       # Technical documentation
-│   ├── architecture-diagrams/
-│   ├── deployment-guide.md
-│   ├── detection-rules.md
-│   ├── operational-scenarios.md
-│   ├── s3-ecr-workflow.md
-│   ├── system-workflow.md
-│   ├── uml-*.md                   # UML diagrams
-│   └── iam-permissions.md
-│
-├── 📄 README.md                   # This file
-└── 📄 LICENSE
-
-```
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
+## 🔧 Installation
 
 ```bash
-# Required tools:
-- AWS CLI (configured with credentials)
-- Terraform >= 1.0
-- Docker & Docker Compose
-- Python 3.8+
-- Git
-- Linux environment (Codespaces, WSL, or native Linux)
+cd /workspaces/cloud-soc-wazuh-automation
+cp .env.example .env
+# Edit .env with AWS credentials and region
+
+pip install -e .
 ```
 
-### Installation & Deployment
+### Environment variables in `.env`
 
-**1. Clone the Repository**
+Required variables:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_DEFAULT_REGION`
+- `PROJECT_TAG=cloud-soc`
+
+## 🧪 Use the Python Orchestrator CLI
+
+### CLI entrypoint
+
 ```bash
-git clone https://github.com/ranaitsan123/cloud-soc-wazuh-automation.git
-cd cloud-soc-wazuh-automation
+cloud-soc --help
 ```
 
-**2. Launch Development Environment**
-```bash
-# Start the DevOps container with AWS and Terraform mounted
-docker-compose up -d devops
+### Important commands
 
-# Enter the container shell
-docker-compose exec devops bash
-```
-
-**3. Deploy AWS Infrastructure**
 ```bash
-# From the repository root, run the Python orchestration CLI
+cloud-soc status
+cloud-soc validate
 cloud-soc apply
+cloud-soc destroy
+cloud-soc dashboard
+cloud-soc import aws_vpc.wazuh_vpc vpc-0123456789abcdef0
+cloud-soc version
+```
 
-# For non-interactive deployment
+### Apply infrastructure
+
+```bash
+cloud-soc apply
+```
+
+```bash
 cloud-soc apply --auto-approve
+```
 
-# Use a custom Terraform variables file
+```bash
 cloud-soc apply --var-file prod.tfvars
 ```
 
-The CLI will initialize Terraform, validate the configuration, generate a plan, and apply the changes automatically.
-
-**4. Deploy Wazuh SOC**
-
-Terraform automatically handles the entire Wazuh Stack deployment on the EC2 instance:
-- Sets system limits
-- Downloads configurations from S3
-- Generates certificates
-- Starts all services via Docker Compose
-
-**⏳ Wait ~2-3 minutes for EC2 instance to initialize and services to start**
-
-**5. Access the Dashboard**
-```
-🌐 Wazuh Dashboard: https://localhost
-📊 Port: 443 (HTTPS)
-👤 Default Username: admin
-🔐 Password: See wazuh-docker/config/wazuh.yml
-```
-
-**6. Verify Deployment**
-```bash
-# Check all services are running
-docker compose ps
-
-# View Wazuh logs
-docker compose logs -f wazuh.manager
-```
-
----
-
-## � Python Infrastructure Platform (NEW)
-
-Starting from this version, the project includes a **modern Python-based orchestration platform** for managing infrastructure and incident response workflows.
-
-### Modern CLI Interface
+### Destroy infrastructure
 
 ```bash
-# Install Python CLI
+cloud-soc destroy
+```
+
+```bash
+cloud-soc destroy --auto-approve --force
+```
+
+### Dashboard access via SSM
+
+```bash
+cloud-soc dashboard
+```
+
+Then open:
+
+```bash
+https://127.0.0.1:8443
+```
+
+### Import an existing AWS resource
+
+```bash
+cloud-soc import aws_vpc.wazuh_vpc vpc-0123456789abcdef0
+```
+
+## 💡 Branch-Specific Workflow
+
+This branch is intended to be consumed through the Python orchestrator rather than raw Terraform or shell scripts.
+
+### Orchestrator flow
+
+1. `cloud-soc apply`
+2. Terraform init + optional AWS resource import
+3. Terraform validate + plan + apply
+4. Wait for SSM connectivity
+5. Generate Ansible inventory from EC2 instances
+6. Execute Ansible playbooks against target hosts
+7. Print dashboard access instructions
+
+### Platform behavior
+
+- Terraform operations are handled by `TerraformRunner`
+- AWS discovery is handled by Boto3 service classes
+- Wazuh configuration is deployed via Ansible on private instances
+- Dashboard access uses SSM port forwarding via AWS CLI
+- Existing resources can be reused safely
+
+## 🧱 Important Branch Files
+
+| Path | Description |
+|---|---|
+| `cloudsoc/main.py` | CLI command definitions |
+| `cloudsoc/orchestrator.py` | Deployment orchestration logic |
+| `cloudsoc/terraform/runner.py` | Terraform command wrapper |
+| `cloudsoc/terraform/imports.py` | Safe AWS resource import logic |
+| `cloudsoc/aws/ec2.py` | EC2 discovery and helpers |
+| `cloudsoc/aws/iam.py` | IAM management helpers |
+| `cloudsoc/aws/ssm.py` | SSM session and command helpers |
+| `cloudsoc/ansible/deploy.py` | Ansible execution support |
+| `cloudsoc/config/settings.py` | Environment and settings loader |
+| `ansible/playbooks/` | Service deployment playbooks |
+| `terraform/` | Infrastructure-as-code definitions |
+| `docs/` | Branch-specific documentation |
+
+## 🧰 Recommended Local Workflow
+
+### Using Docker Compose
+
+```bash
+docker-compose up -d devops
+docker-compose exec devops bash
+cloud-soc status
+```
+
+### Direct host usage
+
+```bash
 pip install -e .
-
-# Use the new cloud-soc command
-cloud-soc status      # Show infrastructure status
-cloud-soc apply       # Deploy infrastructure changes
-cloud-soc destroy     # Remove infrastructure
-cloud-soc validate    # Validate configuration
+cloud-soc validate
+cloud-soc apply
 ```
 
-### Key Features
+## 🔍 Developer Notes
 
-✅ **Type-Safe Operations** - Pydantic models for all AWS resources
-✅ **Boto3 Integration** - Native AWS SDK instead of CLI parsing
-✅ **Terraform Orchestration** - Automated Terraform workflows
-✅ **Service-Oriented** - Modular services for EC2, IAM, S3, ECR, SSM
-✅ **Comprehensive Logging** - Structured logging for all operations
-✅ **Well-Tested** - Pytest test suite with examples
+### Package entrypoint
 
-### Documentation
+The command is installed from `pyproject.toml`:
 
-- 📖 [QUICKSTART.md](QUICKSTART.md) - Quick start guide with examples
-- 📖 [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Complete migration documentation
-- 📖 [cloudsoc/README.md](cloudsoc/README.md) - Python API documentation
-- 📖 [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - What was implemented
-
-### Python API Example
-
-```python
-from cloudsoc.aws.ec2 import EC2Service
-from cloudsoc.terraform.runner import TerraformRunner
-from pathlib import Path
-
-# Discover AWS resources
-ec2 = EC2Service(region="eu-north-1")
-vpc = ec2.find_vpc(project_tag="cloud-soc")
-instances = ec2.find_instances(vpc_id=vpc.id)
-
-# Orchestrate Terraform
-runner = TerraformRunner(terraform_dir=Path("terraform"))
-runner.init()
-runner.validate()
-runner.apply()
+```toml
+[project.scripts]
+cloud-soc = "cloudsoc.main:app"
 ```
 
-### Technology Stack
+### Dependencies
 
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| CLI Framework | Typer | 0.9+ |
-| AWS SDK | Boto3 | 1.26+ |
-| Type Validation | Pydantic | 2.0+ |
-| Console UI | Rich | 13.0+ |
-| Testing | Pytest | 7.0+ |
+- `typer>=0.9.0`
+- `rich>=13.0.0`
+- `boto3>=1.26.0`
+- `pydantic>=2.0.0`
+- `python-dotenv>=1.0.0`
+- `pyyaml>=6.0`
+- `ansible-core>=2.14.0`
 
----
+### Tests
 
-## �🔐 Cloud Security & Architecture Design
-
-This project follows **cloud security best practices** and a **defense-in-depth strategy** to ensure a secure and resilient SOC environment.
-
----
-
-### 🏗️ Architecture Design Principles
-
-The infrastructure is designed with the following principles:
-
-- **Isolation by design**
-  - Separation between SOC components and monitored resources
-  - Dedicated network segmentation using VPC
-
-- **Least privilege access**
-  - IAM roles and policies are strictly scoped
-  - No hardcoded credentials
-
-- **Infrastructure as Code (IaC)**
-  - All resources are provisioned using Terraform
-  - Ensures consistency, versioning, and reproducibility
-
-- **Modular architecture**
-  - Separation between infrastructure, detection, and automation layers
-
----
-
-### 🌐 Network Security
-
-- Custom **VPC** with controlled subnets
-- Strict **Security Groups**:
-  - Only required ports are open (principle of minimal exposure)
-  - SSH access restricted to trusted IPs
-- Internal communication between components is limited and controlled
-
----
-
-### 🔑 Identity & Access Management (IAM)
-
-- Use of **IAM Roles instead of static credentials**
-- Fine-grained permissions for:
-  - EC2 instances
-  - Automation scripts (Boto3)
-- Principle of **least privilege enforced across all services**
-
----
-
-### 🖥️ Host Security
-
-- Wazuh agents deployed on all monitored instances
-- Continuous log monitoring:
-  - Authentication logs
-  - System activity
-  - File integrity monitoring (FIM)
-
----
-
-### 📊 Logging & Monitoring
-
-- Centralized logging via Wazuh SIEM
-- Real-time alerting and visualization
-- Correlation of events with **MITRE ATT&CK framework**
-
----
-
-### ⚔️ Threat Detection Strategy
-
-The detection approach is based on:
-
-- Signature-based detection (Wazuh rules)
-- Behavior-based detection (anomaly patterns)
-- Mapping to known attack techniques
-
----
-
-### 🤖 Automated Incident Response
-
-- Integration with Wazuh Active Response
-- Python scripts using AWS SDK (Boto3)
-- Automated remediation actions:
-  - Blocking malicious IP addresses
-  - Modifying Security Groups dynamically
-  - Isolating compromised instances
-
----
-
-### 🧪 Security Validation
-
-To validate the effectiveness of the architecture:
-
-- Simulated attacks using:
-  - Atomic Red Team
-  - MITRE Caldera
-- Continuous testing of:
-  - Detection capabilities
-  - Response mechanisms
-
----
-
-### 🛡️ Defense-in-Depth Strategy
-
-Security is enforced across multiple layers:
-
-1. **Network layer** (VPC, Security Groups)
-2. **Identity layer** (IAM)
-3. **Host layer** (Wazuh agents)
-4. **Detection layer** (SIEM rules)
-5. **Response layer** (automation scripts)
-
----
-
-### 📌 Key Takeaway
-
-This architecture demonstrates how to build a **secure, monitored, and automated cloud environment**, aligned with modern **DevSecOps and SOC practices**. It showcases proactive security thinking through layered defense mechanisms and automation-first incident response.
-
----
-
-## 🧪 Attack & Detection Workflow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. Simulate Attack                                             │
-│     (Atomic Red Team / Caldera)                                 │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  2. Generate Logs on Target Machine                             │
-│     (Binary execution, network activity, system calls)          │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  3. Collect via Wazuh Agent                                     │
-│     (Real-time log forwarding)                                  │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  4. Analyze & Correlate Events                                  │
-│     (Wazuh Manager processing)                                  │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  5. Trigger Alerts in Dashboard                                 │
-│     (Visual detection, analytics)                               │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  6. Map to MITRE ATT&CK Techniques                              │
-│     (Threat intelligence correlation)                           │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  7. Execute Automated Response (if configured)                  │
-│     (Block IP, isolate instance, alert ops team)                │
-└─────────────────────────────────────────────────────────────────┘
+```bash
+pytest cloudsoc/tests/
 ```
 
----
+## 📘 Branch Documentation
 
-## 📊 Example Detection Scenarios
+- `docs/README.md` — branch docs hub
+- `docs/1-getting-started/02-quick-start.md`
+- `docs/2-guides/ansible/deploy-wazuh.md`
+- `docs/4-explanation/python-migration-guide.md`
+- `QUICKSTART.md`
+- `MIGRATION_GUIDE.md`
+- `QUICK_REFERENCE.md`
 
-| Scenario | MITRE Technique | Detection Method | Automated Response |
-|----------|-----------------|-----------------|-------------------|
-| **SSH Brute Force** | T1110 (Brute Force) | Wazuh rules (failed logins) | Block IP via SG |
-| **Command Execution** | T1059 (Command Line) | Binary execution logs | Alert + Monitoring |
-| **Privilege Escalation** | T1068 (Exploitation) | Sudoers activity logs | Isolate instance |
-| **Suspicious Process** | T1543 (Process Creation) | Process monitoring | Kill process + Alert |
-| **Unauthorized Access** | T1021 (Remote Access) | SSH/RDP logs | Revoke access |
+## ⚠️ Notes
 
----
+- This README is intentionally branch-specific for `refactor/python-orchestrator`.
+- Use `cloud-soc` as the primary entrypoint.
+- Avoid direct Terraform CLI use unless you understand the branch-specific orchestration model.
+- Existing AWS resources are imported into state automatically when possible.
 
-## 📈 Project Status
+## 📌 Summary
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| AWS Infrastructure (Terraform) | ✅ | EC2, VPC, SG, IAM, S3, ECR |
-| Wazuh SOC Deployment | ✅ | Manager, Indexer, Dashboard |
-| Log Collection & Monitoring | ✅ | Real-time agent deployment |
-| Attack Simulation (Atomic Red Team) | ✅ | Basic scenarios implemented |
-| Detection Rules | 🔄 | Ongoing optimization |
-| Automated Response (Python + Boto3) | 🔄 | VM isolation implemented |
-| Advanced Scenarios (Caldera) | ⏳ | In development |
-| CI/CD Integration | ⏳ | Planned |
+This branch is the Python-first orchestration path for Cloud SOC. The core workflow is:
 
----
+- `cloud-soc apply` → provision infrastructure and run Ansible
+- `cloud-soc status` → inspect deployed AWS resources
+- `cloud-soc dashboard` → access Wazuh via SSM
+- `cloud-soc destroy` → clean up infrastructure
 
-## 🔮 Future Roadmap
-
-- 📌 **Multi-stage attack scenarios** with Caldera
-- 📌 **Enhanced detection rules** for advanced threats
-- 📌 **Full SOC playbooks** (Detection → Investigation → Response)
-- 📌 **CI/CD pipeline** for deployment automation
-- 📌 **Performance optimization** and load testing
-- 📌 **SIEM integration** with Splunk/ELK alternatives
-- 📌 **Threat intelligence feeds** integration
-- 📌 **Custom dashboard** widgets and reports
-
----
-
-## 📚 Documentation
-
-Comprehensive documentation is available in the [`/docs`](./docs) folder:
-
-- **Architecture Diagrams** – Component relationships and data flow
-- **Deployment Guide** – Step-by-step setup instructions
-- **Detection Rules** – Wazuh custom rules and logic
-- **Operational Scenarios** – Real-world use cases
-- **System Workflow** – End-to-end detection process
-- **IAM Permissions** – AWS security best practices
-- **Branch Strategy** – `feature/art-soc-baseline` plan and step-by-step validation
-- **UML Diagrams** – System design and interactions
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. **Fork** the repository
-2. **Create a feature branch** (`git checkout -b feature/my-feature`)
-3. **Commit changes** with clear messages
-4. **Push** to your fork (`git push origin feature/my-feature`)
-5. **Open a Pull Request** with a detailed description
-
-### Guidelines:
-- Follow existing code style
-- Add unit tests for new features
-- Update documentation
-- Test infrastructure changes in a sandbox environment
-
----
-
-## 🔗 Related Repositories
-
-- Related repo: https://github.com/ranaitsan123/cloud-soc-wazuh
-- Main automation: https://github.com/ranaitsan123/cloud-soc-wazuh-automation
-
----
-
-## 👤 Author
-
-**Aicha Lahnite**  
-*Master's in Intelligent Systems Engineering*  
-*Cloud, Networks & Systems Specialization*  
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License** – see the [LICENSE](./LICENSE) file for details.
-
----
-
-## 💡 Key Takeaways
-
-This project demonstrates how to design and implement a **cloud-native SOC** capable of:
-
-- 🎯 **Detecting threats in real time** using SIEM technology
-- 🤖 **Automating incident response** to reduce MTTR
-- 🧪 **Simulating real-world cyberattacks** for validation
-- 🏗️ **Building scalable infrastructure** with IaC principles
-
-It bridges the gap between **theoretical cybersecurity concepts** and **practical DevSecOps implementation**, serving as both a learning resource and a production-ready security framework.
-
----
-
-<div align="center">
-
-**⭐ If you find this project useful, please consider giving it a star!**
-
-</div>
+For branch-specific documentation, use `docs/README.md`.
