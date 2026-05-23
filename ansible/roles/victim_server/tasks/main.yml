@@ -1,6 +1,7 @@
 - name: Ensure apt cache is updated
-  ansible.builtin.command:
-    cmd: apt-get update -y
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
   changed_when: false
 
 - name: Install Victim server prerequisites

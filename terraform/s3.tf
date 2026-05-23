@@ -12,10 +12,6 @@ resource "aws_s3_bucket" "wazuh_assets" {
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_s3_bucket_versioning" "wazuh_assets" {
@@ -45,7 +41,7 @@ resource "aws_s3_bucket_public_access_block" "wazuh_assets" {
 }
 
 # Upload wazuh-docker files to S3
-resource "aws_s3_bucket_object" "wazuh_docker_compose" {
+resource "aws_s3_object" "wazuh_docker_compose" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/docker-compose.yml"
   source       = "${path.module}/../wazuh-docker/docker-compose.yml"
@@ -60,7 +56,7 @@ resource "aws_s3_bucket_object" "wazuh_docker_compose" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_certs_generator" {
+resource "aws_s3_object" "wazuh_certs_generator" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/generate-indexer-certs.yml"
   source       = "${path.module}/../wazuh-docker/generate-indexer-certs.yml"
@@ -76,7 +72,7 @@ resource "aws_s3_bucket_object" "wazuh_certs_generator" {
 }
 
 # Upload config files
-resource "aws_s3_bucket_object" "wazuh_config_certs" {
+resource "aws_s3_object" "wazuh_config_certs" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/certs.yml"
   source       = "${path.module}/../wazuh-docker/config/certs.yml"
@@ -91,7 +87,7 @@ resource "aws_s3_bucket_object" "wazuh_config_certs" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_manager_conf" {
+resource "aws_s3_object" "wazuh_manager_conf" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/wazuh_cluster/wazuh_manager.conf"
   source       = "${path.module}/../wazuh-docker/config/wazuh_cluster/wazuh_manager.conf"
@@ -106,7 +102,7 @@ resource "aws_s3_bucket_object" "wazuh_manager_conf" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_indexer_config" {
+resource "aws_s3_object" "wazuh_indexer_config" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml"
   source       = "${path.module}/../wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml"
@@ -121,7 +117,7 @@ resource "aws_s3_bucket_object" "wazuh_indexer_config" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_indexer_users" {
+resource "aws_s3_object" "wazuh_indexer_users" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/wazuh_indexer/internal_users.yml"
   source       = "${path.module}/../wazuh-docker/config/wazuh_indexer/internal_users.yml"
@@ -136,7 +132,7 @@ resource "aws_s3_bucket_object" "wazuh_indexer_users" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_dashboard_config" {
+resource "aws_s3_object" "wazuh_dashboard_config" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml"
   source       = "${path.module}/../wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml"
@@ -151,7 +147,7 @@ resource "aws_s3_bucket_object" "wazuh_dashboard_config" {
   }
 }
 
-resource "aws_s3_bucket_object" "wazuh_dashboard_wazuh_yml" {
+resource "aws_s3_object" "wazuh_dashboard_wazuh_yml" {
   bucket = aws_s3_bucket.wazuh_assets.id
   key    = "wazuh-docker/config/wazuh_dashboard/wazuh.yml"
   source       = "${path.module}/../wazuh-docker/config/wazuh_dashboard/wazuh.yml"

@@ -22,14 +22,14 @@ resource "aws_instance" "wazuh_server" {
   }
 
   depends_on = [
-    aws_s3_bucket_object.wazuh_docker_compose,
-    aws_s3_bucket_object.wazuh_certs_generator,
-    aws_s3_bucket_object.wazuh_config_certs,
-    aws_s3_bucket_object.wazuh_manager_conf,
-    aws_s3_bucket_object.wazuh_indexer_config,
-    aws_s3_bucket_object.wazuh_indexer_users,
-    aws_s3_bucket_object.wazuh_dashboard_config,
-    aws_s3_bucket_object.wazuh_dashboard_wazuh_yml,
+    aws_s3_object.wazuh_docker_compose,
+    aws_s3_object.wazuh_certs_generator,
+    aws_s3_object.wazuh_config_certs,
+    aws_s3_object.wazuh_manager_conf,
+    aws_s3_object.wazuh_indexer_config,
+    aws_s3_object.wazuh_indexer_users,
+    aws_s3_object.wazuh_dashboard_config,
+    aws_s3_object.wazuh_dashboard_wazuh_yml,
     aws_nat_gateway.nat,
     aws_route_table_association.management_private
   ]
@@ -42,7 +42,7 @@ exec > >(tee /var/log/bootstrap.log)
 exec 2>&1
 
 apt-get update -y
-apt-get install -y apt-transport-https ca-certificates curl software-properties-common git python3 python3-pip awscli snapd
+apt-get install -y apt-transport-https ca-certificates curl software-properties-common git python3 python3-apt python3-pip awscli snapd
 
 pip3 install ansible
 
@@ -83,7 +83,7 @@ exec > >(tee /var/log/bootstrap.log)
 exec 2>&1
 
 apt-get update -y
-apt-get install -y apt-transport-https ca-certificates curl gnupg software-properties-common git wget python3 python3-pip awscli snapd
+apt-get install -y apt-transport-https ca-certificates curl gnupg software-properties-common git wget python3 python3-apt python3-pip awscli snapd
 
 pip3 install ansible
 
