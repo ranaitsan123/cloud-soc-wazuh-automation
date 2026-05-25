@@ -58,6 +58,12 @@ This report summarizes non-syntactic, logic-level issues found in the current re
 - The Wazuh manager and victim user data scripts install `snapd` and `amazon-ssm-agent`, but the Ansible roles assume Docker and AWS CLI are already available and usable on remote hosts.
 - If the remote instance bootstrap fails or if the instance is not fully configured, Ansible will not be able to complete.
 
+## 8. Ansible role improvements applied
+
+- The `wazuh_manager` role now uses `amazon.aws.aws_s3` to fetch S3 artifacts in an idempotent way, instead of one-shot `aws s3 cp` shell commands.
+- The `victim_server` role now updates the Wazuh manager address with a safer file edit approach and uses proper container lifecycle management.
+- `community.docker` has been added to `ansible/requirements.yml` so container and Compose operations are performed through Ansible modules.
+
 ## Summary of the most critical breaking issues
 
 1. **Terraform backend requires explicit S3 backend configuration** before init/apply.

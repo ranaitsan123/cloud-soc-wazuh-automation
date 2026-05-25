@@ -1,0 +1,6 @@
+---
+# Defaults for wazuh_manager role
+s3_prefix: "wazuh-docker"
+aws_region: "eu-north-1"
+wazuh_user: "{{ ansible_user_id | default('root') }}"
+wazuh_group: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"

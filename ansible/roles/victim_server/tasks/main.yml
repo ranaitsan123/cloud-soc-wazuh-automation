@@ -58,7 +58,7 @@
     state: present
     default_release: stable
 
-- name: Enable and start Wazuh agent
+- name: Ensure Wazuh agent is enabled and started
   ansible.builtin.service:
     name: wazuh-agent
     state: started
@@ -66,18 +66,25 @@
 
 - name: Ensure /opt/fortress directory exists
   ansible.builtin.file:
-    path: /opt/fortress
+    path: "{{ fortress_dir }}"
     state: directory
-    owner: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"
-    group: "{{ wazuh_group | default(wazuh_user | default(ansible_user_id | default('root'))) }}"
+    owner: "{{ wazuh_user }}"
+    group: "{{ wazuh_group }}"
     mode: '0755'
 
-- name: Configure Wazuh agent manager connection
+- name: Remove stale Wazuh manager address entries
+  ansible.builtin.replace:
+    path: /var/ossec/etc/ossec.conf
+    regexp: '^\s*<address>.*</address>\s*$'
+    replace: ''
+  ignore_errors: yes
+
+- name: Configure Wazuh manager connection
   ansible.builtin.lineinfile:
     path: /var/ossec/etc/ossec.conf
-    regexp: '<manager>'
+    regexp: '^\s*<address>.*</address>\s*$'
     line: '      <address>{{ wazuh_manager_ip }}</address>'
-    insertafter: '<!-- Manager connection -->'
+    insertafter: '<manager>'
     state: present
   notify: restart wazuh-agent
 
@@ -88,72 +95,38 @@
       - ecr_victim_repository_url != ''
     fail_msg: "The ECR victim repository URL must be provided as an Ansible extra var."
 
-- name: Notify that ECR repository readiness is being polled
-  ansible.builtin.debug:
-    msg: "Waiting for ECR repository '{{ ecr_victim_repository_url }}' to be available..."
+- name: Parse ECR registry information
+  ansible.builtin.set_fact:
+    ecr_registry: "{{ ecr_victim_repository_url.split('/')[0] }}"
+    ecr_repository_name: "{{ ecr_victim_repository_url.split('/', 1)[1] }}"
 
-- name: Verify ECR repository exists and is accessible
+- name: Retrieve ECR login password
   ansible.builtin.shell: |
-    repo_name=$(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f2-)
-    aws ecr describe-repositories --repository-names "$repo_name" --region {{ aws_region }}
+    aws ecr get-login-password --region {{ aws_region }}
   args:
     executable: /bin/bash
-  register: ecr_repo_check
-  retries: 20
-  delay: 30
-  until: ecr_repo_check.rc == 0
+  register: ecr_login_password
   changed_when: false
+  failed_when: ecr_login_password.rc != 0
 
-- name: Notify that ECR image tag readiness is being polled
-  ansible.builtin.debug:
-    msg: "Waiting for ECR image 'latest' in '{{ ecr_victim_repository_url }}' to be available..."
-
-- name: Verify ECR image tag exists in repository
-  ansible.builtin.shell: |
-    repo_name=$(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f2-)
-    aws ecr describe-images --repository-name "$repo_name" --image-ids imageTag=latest --region {{ aws_region }}
-  args:
-    executable: /bin/bash
-  register: ecr_image_check
-  retries: 20
-  delay: 30
-  until: ecr_image_check.rc == 0
-  changed_when: false
-
-- name: Notify that ECR login retries are starting
-  ansible.builtin.debug:
-    msg: "Attempting to login to ECR registry for '{{ ecr_victim_repository_url }}'..."
-
-- name: Login to ECR
-  ansible.builtin.shell: |
-    aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin $(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f1)
-  args:
-    executable: /bin/bash
-  register: ecr_login
-  retries: 5
-  delay: 15
-  until: ecr_login.rc == 0
-
-- name: Notify that image pull retries are starting
-  ansible.builtin.debug:
-    msg: "Pulling image '{{ ecr_victim_repository_url }}:latest' from ECR. Will retry until available."
+- name: Log in to ECR
+  community.docker.docker_login:
+    registry_url: "{{ ecr_registry }}"
+    username: AWS
+    password: "{{ ecr_login_password.stdout }}"
 
 - name: Pull victim container image from ECR
-  ansible.builtin.shell: |
-    docker pull "{{ ecr_victim_repository_url }}:latest"
-  args:
-    executable: /bin/bash
-  register: pull_result
-  retries: 20
-  delay: 30
-  until: pull_result.rc == 0
+  community.docker.docker_image:
+    name: "{{ ecr_victim_repository_url }}"
+    tag: "{{ victim_container_image_tag }}"
+    source: pull
 
 - name: Ensure victim-art container is running
-  ansible.builtin.docker_container:
-    name: victim-art
-    image: "{{ ecr_victim_repository_url }}:latest"
+  community.docker.docker_container:
+    name: "{{ victim_container_name }}"
+    image: "{{ ecr_victim_repository_url }}:{{ victim_container_image_tag }}"
     state: started
     restart_policy: always
+    recreate: yes
     volumes:
-      - /opt/fortress:/opt/fortress
-    command: tail -f /dev/null
+      - "{{ fortress_dir }}:{{ fortress_dir }}"

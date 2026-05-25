@@ -1,0 +1,10 @@
+---
+# Defaults for victim_server role
+wazuh_manager_ip: "127.0.0.1"
+aws_region: "eu-north-1"
+ecr_victim_repository_url: ""
+victim_container_name: "victim-art"
+victim_container_image_tag: "latest"
+fortress_dir: "/opt/fortress"
+wazuh_user: "{{ ansible_user_id | default('root') }}"
+wazuh_group: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"

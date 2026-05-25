@@ -36,6 +36,19 @@ The following playbooks are applied:
 - `ansible/playbooks/wazuh_manager.yml`
 - `ansible/playbooks/victim_server.yml`
 
+### 4. What changed in the Ansible roles
+
+- `ansible/roles/wazuh_manager` now downloads Wazuh configuration artifacts from S3 using `amazon.aws.aws_s3`, making the role idempotent and ensuring updated config is reapplied.
+- `ansible/roles/victim_server` now uses a proper Wazuh agent manager address update flow and keeps a managed Docker container for the victim image instead of using `tail -f /dev/null`.
+- The repository now declares `community.docker` in `ansible/requirements.yml` so container lifecycle and Compose management are handled through Ansible modules rather than shell wrappers.
+
+## Deployment flow
+
+1. Run `cloud-soc apply` to provision infrastructure.
+2. Wait for instances to be reachable through SSM.
+3. Execute Ansible playbooks via the orchestrator.
+4. Wazuh Manager and victim services are configured and started.
+
 The bootstrap playbook installs common host prerequisites before the service-specific roles run.
 
 Remote execution is orchestrated from the Python layer. The orchestrator generates an SSM-based inventory file and runs playbooks against remote host groups (`wazuh` and `victims`) instead of using `localhost` as inventory.
