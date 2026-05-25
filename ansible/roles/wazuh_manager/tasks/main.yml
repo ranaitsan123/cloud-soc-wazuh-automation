@@ -2,6 +2,7 @@
   ansible.builtin.apt:
     update_cache: yes
     cache_valid_time: 3600
+  changed_when: false
 
 - name: Install Wazuh manager prerequisites
   ansible.builtin.apt:
@@ -15,7 +16,6 @@
       - python3
       - python3-pip
     state: present
-    update_cache: yes
 
 - name: Install Docker GPG key
   ansible.builtin.apt_key:
@@ -36,7 +36,6 @@
       - containerd.io
       - docker-compose-plugin
     state: present
-    update_cache: yes
 
 - name: Install boto3 Python module
   ansible.builtin.pip:
@@ -48,8 +47,8 @@
     path: "{{ item }}"
     state: directory
     recurse: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"
+    group: "{{ wazuh_group | default(wazuh_user | default(ansible_user_id | default('root'))) }}"
     mode: '0755'
   loop:
     - /opt/wazuh
@@ -120,8 +119,8 @@
   ansible.builtin.file:
     path: /opt/wazuh
     recurse: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ wazuh_user | default(ansible_user_id | default('root')) }}"
+    group: "{{ wazuh_group | default(wazuh_user | default(ansible_user_id | default('root'))) }}"
     mode: '0755'
 
 - name: Start Wazuh services with Docker Compose

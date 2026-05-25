@@ -1,6 +1,7 @@
 resource "aws_ecr_repository" "victim_repo" {
   name                 = var.ecr_victim_repository_name
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   tags = {
     Name      = "cloud-soc-victim-repo"
@@ -33,6 +34,7 @@ resource "aws_ecr_lifecycle_policy" "victim_repo_prune" {
 resource "aws_ecr_repository" "manager_repo" {
   name                 = var.ecr_manager_repository_name
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   tags = {
     Name      = "cloud-soc-wazuh-manager-repo"

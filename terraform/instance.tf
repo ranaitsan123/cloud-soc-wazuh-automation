@@ -42,7 +42,7 @@ exec > >(tee /var/log/bootstrap.log)
 exec 2>&1
 
 apt-get update -y
-apt-get install -y apt-transport-https ca-certificates curl software-properties-common git python3 python3-pip awscli snapd
+apt-get install -y apt-transport-https ca-certificates curl software-properties-common git python3 python3-apt python3-pip awscli snapd
 
 pip3 install ansible
 
@@ -56,6 +56,7 @@ EOF
 
   tags = {
     Name      = "wazuh-server"
+    Role      = "wazuh"
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }
@@ -66,7 +67,7 @@ resource "aws_instance" "victim_server" {
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.production_private.id
   vpc_security_group_ids = [aws_security_group.victim_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.wazuh_instance_profile.name
+  iam_instance_profile   = aws_iam_instance_profile.victim_instance_profile.name
   key_name               = var.wazuh_key_name != "" ? var.wazuh_key_name : null
 
   depends_on = [
@@ -82,7 +83,7 @@ exec > >(tee /var/log/bootstrap.log)
 exec 2>&1
 
 apt-get update -y
-apt-get install -y apt-transport-https ca-certificates curl gnupg software-properties-common git wget python3 python3-pip awscli snapd
+apt-get install -y apt-transport-https ca-certificates curl gnupg software-properties-common git wget python3 python3-apt python3-pip awscli snapd
 
 pip3 install ansible
 
@@ -95,6 +96,7 @@ EOF
   )
   tags = {
     Name      = "victim-server"
+    Role      = "victim"
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }

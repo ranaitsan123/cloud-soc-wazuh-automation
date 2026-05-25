@@ -50,6 +50,10 @@ resource "aws_security_group" "wazuh_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tags = {
     Name      = "wazuh-sg"
     Project   = "cloud-soc"
@@ -85,24 +89,12 @@ resource "aws_security_group" "victim_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tags = {
     Name      = "victim-sg"
-    Project   = "cloud-soc"
-    ManagedBy = "terraform"
-  }
-}
-
-resource "aws_security_group" "jail_sg" {
-  name        = "jail-sg"
-  description = "Jail security group for isolated instances"
-  vpc_id      = aws_vpc.wazuh_vpc.id
-
-  ingress = []
-
-  egress = []
-
-  tags = {
-    Name      = "jail-sg"
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }

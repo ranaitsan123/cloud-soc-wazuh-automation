@@ -1,5 +1,5 @@
 - name: Configure Wazuh Manager
-  hosts: localhost
+  hosts: wazuh
   gather_facts: false
   become: true
   vars:
