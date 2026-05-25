@@ -5,6 +5,7 @@ This guide explains how Ansible is used to configure the Cloud SOC environment a
 ## Contents
 
 - [Deploy Wazuh and Victim Services](deploy-wazuh.md)
+- [Ansible Refactor Plan](refactor-plan.md)
 
 ## Purpose
 

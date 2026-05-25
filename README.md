@@ -224,6 +224,7 @@ pytest cloudsoc/tests/
 - `docs/README.md` — branch docs hub
 - `docs/1-getting-started/02-quick-start.md`
 - `docs/2-guides/ansible/deploy-wazuh.md`
+- `docs/2-guides/ansible/refactor-plan.md`
 - `docs/4-explanation/python-migration-guide.md`
 - `QUICKSTART.md`
 - `MIGRATION_GUIDE.md`

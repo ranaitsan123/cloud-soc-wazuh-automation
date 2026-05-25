@@ -35,7 +35,7 @@ The following playbooks are applied:
 - `ansible/playbooks/wazuh_manager.yml`
 - `ansible/playbooks/victim_server.yml`
 
-Remote execution occurs inside `/opt/ansible` and uses `localhost` as inventory.
+Remote execution is orchestrated from the Python layer. The orchestrator generates an SSM-based inventory file and runs playbooks against remote host groups (`wazuh` and `victims`) instead of using `localhost` as inventory.
 
 ## Deployment flow
 
