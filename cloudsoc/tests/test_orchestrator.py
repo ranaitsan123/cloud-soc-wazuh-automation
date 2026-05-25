@@ -46,6 +46,29 @@ def test_inventory_generator_groups_hosts(tmp_path):
     assert "10.0.2.10" in contents
 
 
+def test_inventory_generator_uses_temporary_file_by_default():
+    mock_ec2 = Mock()
+    mock_ec2.find_instances.return_value = [
+        EC2Instance(
+            id="i-0",
+            type="t3.micro",
+            state="running",
+            private_ip="10.0.1.10",
+            public_ip=None,
+            vpc_id="vpc-123",
+            subnet_id="subnet-123",
+            tags={"Name": "wazuh-manager", "Project": "cloud-soc"}
+        )
+    ]
+
+    generator = InventoryGenerator(mock_ec2)
+    result_path = generator.generate(project_tag="cloud-soc")
+
+    assert result_path.exists()
+    assert "[wazuh]" in result_path.read_text()
+    result_path.unlink()
+
+
 def test_ssm_wait_for_instance_online():
     with patch("cloudsoc.aws.ssm.boto3.Session") as mock_session:
         mock_client = Mock()

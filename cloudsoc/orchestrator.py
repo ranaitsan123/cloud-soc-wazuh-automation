@@ -1,6 +1,7 @@
 """Deployment orchestration, inventory generation, and dashboard helpers."""
 
 import json
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -19,7 +20,7 @@ from cloudsoc.utils.logger import logger
 from cloudsoc.utils.shell import run_command, ShellCommandError
 
 console = Console()
-DEFAULT_INVENTORY_FILE = Path("inventory/generated_hosts.ini")
+DEFAULT_INVENTORY_FILE = None
 
 
 class OrchestrationError(Exception):
@@ -29,7 +30,7 @@ class OrchestrationError(Exception):
 class InventoryGenerator:
     """Builds dynamic Ansible inventory from AWS EC2 discovery."""
 
-    def __init__(self, ec2_service: EC2Service, inventory_path: Path = DEFAULT_INVENTORY_FILE):
+    def __init__(self, ec2_service: EC2Service, inventory_path: Optional[Path] = DEFAULT_INVENTORY_FILE):
         self.ec2_service = ec2_service
         self.inventory_path = inventory_path
 
@@ -58,7 +59,14 @@ class InventoryGenerator:
         if not any(group_hosts.values()):
             raise OrchestrationError("Inventory generation did not discover any hosts")
 
-        self.inventory_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.inventory_path:
+            inventory_path = self.inventory_path
+        else:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ini")
+            inventory_path = Path(temp_file.name)
+            temp_file.close()
+
+        inventory_path.parent.mkdir(parents=True, exist_ok=True)
         lines: List[str] = []
 
         for group, hosts in group_hosts.items():
@@ -68,9 +76,9 @@ class InventoryGenerator:
             lines.extend(hosts)
             lines.append("")
 
-        self.inventory_path.write_text("\n".join(lines).strip() + "\n")
-        logger.info(f"✓ Generated inventory at {self.inventory_path}")
-        return self.inventory_path
+        inventory_path.write_text("\n".join(lines).strip() + "\n")
+        logger.info(f"✓ Generated inventory at {inventory_path}")
+        return inventory_path
 
 
 class DeploymentOrchestrator:
@@ -113,10 +121,13 @@ class DeploymentOrchestrator:
 
         self._wait_for_ssm_ready()
         inventory_path = self.inventory_generator.generate(self.settings.project.tag)
-        self._validate_inventory_file(inventory_path)
-        self._run_playbooks(inventory_path)
-        self._validate_deployment()
-        self._print_dashboard_instructions()
+        try:
+            self._validate_inventory_file(inventory_path)
+            self._run_playbooks(inventory_path)
+            self._validate_deployment()
+            self._print_dashboard_instructions()
+        finally:
+            self._cleanup_inventory_file(inventory_path)
 
     def _import_all_existing_resources(self) -> None:
         """Import all existing AWS resources into Terraform state to prevent recreation."""
@@ -369,6 +380,14 @@ class DeploymentOrchestrator:
             return False
 
         return invocation.get("output", "") == "200"
+
+    def _cleanup_inventory_file(self, inventory_path: Path) -> None:
+        try:
+            if inventory_path.exists():
+                inventory_path.unlink()
+                logger.debug(f"Removed temporary inventory file {inventory_path}")
+        except Exception as e:
+            logger.warning(f"Unable to remove temporary inventory file {inventory_path}: {e}")
 
     def _get_wazuh_instance_id(self) -> Optional[str]:
         outputs = self.tf_runner.output()
