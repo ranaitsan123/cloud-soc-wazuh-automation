@@ -47,7 +47,8 @@ class AnsibleService:
         """
         # Ensure collections are installed before running playbooks
         if not self._collections_installed:
-            self._install_collections()
+            if not self._install_collections():
+                return False
 
         playbook_path = self.playbooks_dir / playbook_name
 
@@ -101,21 +102,20 @@ class AnsibleService:
         """Resolve the ansible-playbook executable path."""
         return shutil.which("ansible-playbook")
 
-    def _install_collections(self) -> None:
+    def _install_collections(self) -> bool:
         """Install Ansible collections from requirements.yml."""
         if not self.requirements_file.exists():
             self.logger.debug(f"No requirements file found at {self.requirements_file}")
             self._collections_installed = True
-            return
+            return True
 
         ansible_galaxy = shutil.which("ansible-galaxy")
         if not ansible_galaxy:
-            self.logger.warning(
-                "ansible-galaxy not found. Skipping collection installation. "
-                "Some playbooks may fail if required collections are missing."
+            self.logger.error(
+                "ansible-galaxy not found. Cannot install required collections. "
+                "Install Ansible or ensure ansible-galaxy is available."
             )
-            self._collections_installed = True
-            return
+            return False
 
         try:
             self.logger.info("Installing Ansible collections...")
@@ -123,10 +123,10 @@ class AnsibleService:
             run_command(cmd)
             self.logger.debug("✓ Ansible collections installed successfully")
             self._collections_installed = True
+            return True
         except ShellCommandError as e:
-            self.logger.warning(f"Failed to install Ansible collections: {e}")
-            # Continue anyway, as some collections might already be installed
-            self._collections_installed = True
+            self.logger.error(f"Failed to install Ansible collections: {e}")
+            return False
 
 
     def run_task(

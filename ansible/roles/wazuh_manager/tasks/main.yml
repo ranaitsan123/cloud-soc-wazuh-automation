@@ -106,6 +106,12 @@
   args:
     creates: /opt/wazuh/config/wazuh_dashboard/wazuh.yml
 
+- name: Validate Wazuh Docker Compose configuration
+  ansible.builtin.shell: |
+    docker compose -f /opt/wazuh/docker-compose.yml config
+  args:
+    executable: /bin/bash
+
 - name: Generate certificates if needed
   ansible.builtin.shell: |
     if [ ! -d /opt/wazuh/config/wazuh_indexer_ssl_certs ] || [ -z "$(ls -A /opt/wazuh/config/wazuh_indexer_ssl_certs 2>/dev/null)" ]; then

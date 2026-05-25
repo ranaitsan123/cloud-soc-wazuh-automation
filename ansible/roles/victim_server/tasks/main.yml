@@ -81,19 +81,72 @@
     state: present
   notify: restart wazuh-agent
 
+- name: Validate victim ECR repository URL is configured
+  ansible.builtin.assert:
+    that:
+      - ecr_victim_repository_url is defined
+      - ecr_victim_repository_url != ''
+    fail_msg: "The ECR victim repository URL must be provided as an Ansible extra var."
+
+- name: Notify that ECR repository readiness is being polled
+  ansible.builtin.debug:
+    msg: "Waiting for ECR repository '{{ ecr_victim_repository_url }}' to be available..."
+
+- name: Verify ECR repository exists and is accessible
+  ansible.builtin.shell: |
+    repo_name=$(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f2-)
+    aws ecr describe-repositories --repository-names "$repo_name" --region {{ aws_region }}
+  args:
+    executable: /bin/bash
+  register: ecr_repo_check
+  retries: 20
+  delay: 30
+  until: ecr_repo_check.rc == 0
+  changed_when: false
+
+- name: Notify that ECR image tag readiness is being polled
+  ansible.builtin.debug:
+    msg: "Waiting for ECR image 'latest' in '{{ ecr_victim_repository_url }}' to be available..."
+
+- name: Verify ECR image tag exists in repository
+  ansible.builtin.shell: |
+    repo_name=$(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f2-)
+    aws ecr describe-images --repository-name "$repo_name" --image-ids imageTag=latest --region {{ aws_region }}
+  args:
+    executable: /bin/bash
+  register: ecr_image_check
+  retries: 20
+  delay: 30
+  until: ecr_image_check.rc == 0
+  changed_when: false
+
+- name: Notify that ECR login retries are starting
+  ansible.builtin.debug:
+    msg: "Attempting to login to ECR registry for '{{ ecr_victim_repository_url }}'..."
+
 - name: Login to ECR
   ansible.builtin.shell: |
     aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin $(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f1)
   args:
     executable: /bin/bash
+  register: ecr_login
+  retries: 5
+  delay: 15
+  until: ecr_login.rc == 0
+
+- name: Notify that image pull retries are starting
+  ansible.builtin.debug:
+    msg: "Pulling image '{{ ecr_victim_repository_url }}:latest' from ECR. Will retry until available."
 
 - name: Pull victim container image from ECR
-  ansible.builtin.docker_image:
-    name: "{{ ecr_victim_repository_url }}"
-    tag: latest
-    source: pull
-  environment:
-    AWS_REGION: "{{ aws_region }}"
+  ansible.builtin.shell: |
+    docker pull "{{ ecr_victim_repository_url }}:latest"
+  args:
+    executable: /bin/bash
+  register: pull_result
+  retries: 20
+  delay: 30
+  until: pull_result.rc == 0
 
 - name: Ensure victim-art container is running
   ansible.builtin.docker_container:

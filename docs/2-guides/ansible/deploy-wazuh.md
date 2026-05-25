@@ -32,8 +32,11 @@ The orchestration workflow uses AWS SSM to execute Ansible playbooks remotely.
 
 The following playbooks are applied:
 
+- `ansible/playbooks/bootstrap.yml`
 - `ansible/playbooks/wazuh_manager.yml`
 - `ansible/playbooks/victim_server.yml`
+
+The bootstrap playbook installs common host prerequisites before the service-specific roles run.
 
 Remote execution is orchestrated from the Python layer. The orchestrator generates an SSM-based inventory file and runs playbooks against remote host groups (`wazuh` and `victims`) instead of using `localhost` as inventory.
 

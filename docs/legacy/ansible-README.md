@@ -48,7 +48,7 @@ After `cloud-soc apply`, the Python orchestration workflow handles post-apply co
 - apply the `wazuh_manager.yml` playbook to the Wazuh Manager instance
 - apply the `victim_server.yml` playbook to the Victim instance
 
-The remote Ansible execution happens inside `/opt/ansible` on the target instance and uses `localhost` as the inventory.
+The remote Ansible execution happens inside `/opt/ansible` on the target instance and uses a generated SSM-backed inventory with groups such as `wazuh` and `victims`, rather than `localhost`.
 
 ### 4. Role responsibilities
 

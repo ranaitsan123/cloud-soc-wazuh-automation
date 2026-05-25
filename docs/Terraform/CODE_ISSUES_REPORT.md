@@ -2,7 +2,7 @@
 
 This report summarizes non-syntactic, logic-level issues found in the current repository code related to Terraform, Python orchestration, and Ansible deployment.
 
-> Update: the latest changes now support a local Terraform backend by default when S3 backend values are not supplied, and inventory hosts are generated with SSM connection settings for remote EC2 execution.
+> Update: the latest changes now generate inventory hosts with SSM connection settings for remote EC2 execution and validate remote prerequisites before playbook execution.
 
 ## 1. Terraform backend configuration is incomplete
 
@@ -16,15 +16,11 @@ This report summarizes non-syntactic, logic-level issues found in the current re
 - `cloudsoc/terraform/runner.py` expects these values to be provided via settings/env vars: `TERRAFORM_BACKEND_BUCKET`, `TERRAFORM_BACKEND_KEY`, and optionally `TERRAFORM_BACKEND_REGION`.
 - If those values are not supplied, `terraform init` will fail because the S3 backend is incomplete and `-input=false` is used.
 
-## 2. Ansible playbooks target `localhost` instead of remote EC2 hosts
+## 2. Ansible playbooks now target remote EC2 hosts through generated SSM inventory
 
-- `ansible/playbooks/wazuh_manager.yml` and `ansible/playbooks/victim_server.yml` both use:
-  ```yaml
-  hosts: localhost
-  ```
-- The orchestrator still generates a remote inventory file with EC2 private IPs and passes it to `ansible-playbook`.
-- Without any special `ansible.cfg` or remote connection settings, the playbooks will execute on the local orchestrator host rather than the deployed EC2 instances.
-- This is a major deployment logic mismatch: the code appears designed to configure remote instances, but the playbooks are not targeting them.
+- The orchestrator generates a remote inventory file with EC2 private IPs and group sections for `wazuh` and `victims`.
+- The new deployment flow runs `bootstrap.yml` first and then validates remote prerequisites before applying `wazuh_manager.yml` and `victim_server.yml`.
+- This means the playbooks are now aligned with the intended remote execution model and no longer rely on `localhost` as the target.
 
 ## 3. Victim EC2 instance IAM role lacks ECR/S3 permissions
 
@@ -65,13 +61,13 @@ This report summarizes non-syntactic, logic-level issues found in the current re
 ## Summary of the most critical breaking issues
 
 1. **Terraform backend requires explicit S3 backend configuration** before init/apply.
-2. **Ansible playbooks target `localhost` instead of remote EC2 hosts**, which breaks remote deployment.
-3. **Victim instance role lacks ECR access**, preventing the image pull and victim container deployment.
+2. **Ansible orchestration now validates generated inventory and remote prerequisites**, improving deployment safety.
+3. **Victim instance role still requires explicit ECR permissions**, and this remains the most likely runtime failure point for victim image pulls.
 
 ## Recommended next steps
 
 - Add clear default or documented backend configuration for `terraform/backend.tf`, or switch to a local backend for easy testing.
-- Change Ansible playbook hosts to remote groups such as `wazuh` and `victims`, and ensure the inventory and connection settings are consistent.
+- Document the generated inventory groups and connection settings for `wazuh` and `victims` so the Ansible workflow is easier to audit.
 - Grant the victim instance IAM permissions for ECR pulls, at minimum `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability`.
 - Consider whether `s3_prefix` should be an explicit Terraform output to avoid implicit assumptions.
 - Remove or reuse the unused `jail_sg` security group if it is not needed.

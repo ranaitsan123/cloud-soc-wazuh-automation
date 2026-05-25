@@ -113,6 +113,7 @@ class DeploymentOrchestrator:
 
         self._wait_for_ssm_ready()
         inventory_path = self.inventory_generator.generate(self.settings.project.tag)
+        self._validate_inventory_file(inventory_path)
         self._run_playbooks(inventory_path)
         self._validate_deployment()
         self._print_dashboard_instructions()
@@ -228,11 +229,87 @@ class DeploymentOrchestrator:
             "ecr_victim_repository_url": outputs.get("ecr_victim_repository_url", {}).get("value", "")
         }
 
+        if not self.ansible_service.run_playbook("bootstrap.yml", inventory=str(inventory_path)):
+            raise OrchestrationError("Bootstrap playbook failed")
+
+        self._validate_remote_preconditions()
+
         if not self.ansible_service.run_playbook("wazuh_manager.yml", inventory=str(inventory_path), extra_vars=extra_vars_manager):
             raise OrchestrationError("Wazuh manager playbook failed")
 
         if not self.ansible_service.run_playbook("victim_server.yml", inventory=str(inventory_path), extra_vars=extra_vars_victim):
             raise OrchestrationError("Victim server playbook failed")
+
+    def _validate_inventory_file(self, inventory_path: Path) -> None:
+        if not inventory_path.exists():
+            raise OrchestrationError(f"Inventory file not found: {inventory_path}")
+
+        raw_lines = inventory_path.read_text().splitlines()
+        groups = set()
+        has_host = False
+        current_group = None
+
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if line.startswith("[") and line.endswith("]"):
+                current_group = line
+                groups.add(line)
+                continue
+
+            if current_group in {"[wazuh]", "[victims]"}:
+                has_host = True
+
+        if not groups:
+            raise OrchestrationError("Generated inventory does not contain any host groups")
+
+        if "[localhost]" in groups:
+            raise OrchestrationError("Generated inventory must not include localhost entries")
+
+        if not has_host:
+            raise OrchestrationError("Generated inventory contains no hosts in expected groups")
+
+        logger.info(f"✓ Inventory file {inventory_path} validated: groups={sorted(groups)}")
+
+    def _validate_remote_preconditions(self) -> None:
+        instance_ids = self._get_instance_ids()
+        if not instance_ids:
+            raise OrchestrationError("No EC2 instances found for remote precondition validation")
+
+        command = (
+            'set -e\n'
+            'python3 --version\n'
+            'aws --version\n'
+            'docker --version\n'
+            'docker compose version\n'
+        )
+
+        for instance_id in instance_ids:
+            command_id = self.ssm_service.send_command(
+                instance_ids=[instance_id],
+                commands=[command],
+                working_directory="/tmp",
+                timeout=120,
+                document_name="AWS-RunShellScript"
+            )
+
+            if not command_id:
+                raise OrchestrationError(f"Failed to send remote precondition check to {instance_id}")
+
+            invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=120, poll_interval=5)
+            if not invocation:
+                raise OrchestrationError(f"Remote precondition command did not complete for {instance_id}")
+
+            if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
+                raise OrchestrationError(
+                    f"Remote precondition validation failed for {instance_id}: "
+                    f"status={invocation.get('status')} return_code={invocation.get('return_code')} "
+                    f"error={invocation.get('error') or invocation.get('output')}"
+                )
+
+            logger.info(f"✓ Remote preconditions verified for {instance_id}")
 
     def _validate_deployment(self) -> None:
         wazuh_id = self._get_wazuh_instance_id()

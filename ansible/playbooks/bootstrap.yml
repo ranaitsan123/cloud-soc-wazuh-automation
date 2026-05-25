@@ -1,0 +1,73 @@
+- name: Bootstrap remote hosts for Ansible configuration
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      changed_when: false
+
+    - name: Install common host prerequisites
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - git
+          - wget
+          - unzip
+          - python3
+          - python3-pip
+          - awscli
+        state: present
+
+    - name: Install Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+        state: present
+        filename: docker
+
+    - name: Install Docker engine and compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure amazon-ssm-agent service is enabled and started
+      ansible.builtin.service:
+        name: amazon-ssm-agent
+        state: started
+        enabled: yes
+
+    - name: Verify Python is available
+      ansible.builtin.command:
+        cmd: python3 --version
+      changed_when: false
+
+    - name: Verify AWS CLI is available
+      ansible.builtin.command:
+        cmd: aws --version
+      changed_when: false
+
+    - name: Verify Docker is available
+      ansible.builtin.command:
+        cmd: docker --version
+      changed_when: false
+
+    - name: Verify Docker Compose is available
+      ansible.builtin.command:
+        cmd: docker compose version
+      changed_when: false
