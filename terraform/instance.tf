@@ -44,13 +44,8 @@ exec 2>&1
 apt-get update -y
 apt-get install -y apt-transport-https ca-certificates curl software-properties-common git python3 python3-apt python3-pip awscli snapd
 
-pip3 install ansible
-
 snap install amazon-ssm-agent --classic || true
 systemctl enable --now amazon-ssm-agent
-
-mkdir -p /opt/ansible
-chown ubuntu:ubuntu /opt/ansible
 EOF
   )
 
@@ -90,13 +85,8 @@ pip3 install ansible
 snap install amazon-ssm-agent --classic || true
 systemctl enable --now amazon-ssm-agent
 
-mkdir -p /opt/ansible
-chown ubuntu:ubuntu /opt/ansible
-EOF
-  )
-  tags = {
-    Name      = "victim-server"
-    Role      = "victim"
+snap install amazon-ssm-agent --classic || true
+systemctl enable --now amazon-ssm-agent
     Project   = "cloud-soc"
     ManagedBy = "terraform"
   }

@@ -294,27 +294,32 @@ vpc_cleanup.cleanup_vpc_instances(vpc_id=vpc.id)
 vpc_cleanup.cleanup_security_groups(vpc_id=vpc.id)
 ```
 
-## Phase 7: SSM & Ansible Services ✅ COMPLETE
+## Phase 7: SSM & Custom YAML Deployment Services ✅ COMPLETE
 
-### Ansible Service
+### Custom YAML Deployment Service
 
 ```python
-from cloudsoc.ansible.deploy import AnsibleService
+from cloudsoc.deployment.executor import DeploymentService
 
-ansible = AnsibleService(playbooks_dir=Path("ansible/playbooks"))
+deployment = DeploymentService(deployment_dir=Path("deployment"))
 
-# Run playbooks
-ansible.run_playbook(
-    "configure-wazuh.yml",
-    inventory="inventory/aws_ec2.yml",
-    extra_vars={"wazuh_manager_ip": "10.0.1.10"},
-    tags=["deploy"]
+# Run deployments
+deployment.run_deployment(
+    "wazuh_manager",
+    variables={
+        "s3_bucket_name": "cloud-soc-wazuh-assets",
+        "s3_prefix": "wazuh-docker"
+    }
 )
 
-# Ad-hoc commands
-ansible.run_task(
-    hosts="all",
-    module="ping"
+# Run victim server deployment
+deployment.run_deployment(
+    "victim_server",
+    variables={
+        "wazuh_manager_ip": "10.0.1.10",
+        "aws_region": "eu-north-1",
+        "ecr_victim_repository_url": "123456789.dkr.ecr.eu-north-1.amazonaws.com/victim"
+    }
 )
 ```
 
@@ -389,7 +394,7 @@ def test_find_vpc():
 - [ ] Write integration tests
 
 ### Week 5-6: Services & Cleanup
-- [x] Create AnsibleService
+- [x] Create custom deployment service
 - [x] Create cleanup services
 - [x] Add retry logic
 - [ ] Add monitoring/alerting

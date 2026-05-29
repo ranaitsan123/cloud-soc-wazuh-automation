@@ -183,27 +183,30 @@ vpc_cleanup.cleanup_vpc_instances(vpc_id=vpc.id)
 vpc_cleanup.cleanup_security_groups(vpc_id=vpc.id)
 ```
 
-### Ansible Service (`cloudsoc/ansible/deploy.py`)
+### Custom YAML Deployment Service (`cloudsoc/deployment/executor.py`)
 
 ```python
-from cloudsoc.ansible.deploy import AnsibleService
+from cloudsoc.deployment.executor import DeploymentService
 
-ansible = AnsibleService(playbooks_dir=Path("ansible/playbooks"))
+deployment = DeploymentService(deployment_dir=Path("deployment"))
 
-# Run playbook
-success = ansible.run_playbook(
-    "configure-wazuh.yml",
-    inventory="inventory.yml",
-    extra_vars={"manager_ip": "10.0.1.10"},
-    tags=["deploy"],
-    check=False
+# Run deployment
+success = deployment.run_deployment(
+    "wazuh_manager",
+    variables={
+        "s3_bucket_name": "cloud-soc-wazuh-assets",
+        "s3_prefix": "wazuh-docker"
+    }
 )
 
-# Run ad-hoc task
-success = ansible.run_task(
-    hosts="all",
-    module="ping",
-    become=True
+# Run another deployment
+success = deployment.run_deployment(
+    "victim_server",
+    variables={
+        "wazuh_manager_ip": "10.0.1.10",
+        "aws_region": "eu-north-1",
+        "ecr_victim_repository_url": "123456789.dkr.ecr.eu-north-1.amazonaws.com/victim"
+    }
 )
 ```
 

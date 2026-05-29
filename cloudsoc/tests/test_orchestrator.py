@@ -2,8 +2,9 @@
 
 from pathlib import Path
 from unittest.mock import Mock, patch
+import yaml
 
-from cloudsoc.ansible.deploy import AnsibleService
+from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.models.resources import EC2Instance
 from cloudsoc.orchestrator import InventoryGenerator
 from cloudsoc.aws.ssm import SSMService
@@ -61,10 +62,40 @@ def test_ssm_wait_for_instance_online():
         mock_client.describe_instance_information.assert_called()
 
 
-def test_ansible_playbook_missing_binary(tmp_path):
-    ansible_service = AnsibleService(playbooks_dir=tmp_path)
-    playbook = tmp_path / "test_playbook.yml"
-    playbook.write_text("- hosts: all\n  tasks: []\n")
+def test_deployment_service_missing_file(tmp_path):
+    """Test that deployment service handles missing deployment files gracefully."""
+    deployment_service = DeploymentService(deployment_dir=tmp_path)
+    
+    result = deployment_service.run_deployment("nonexistent", variables={})
+    assert result is False
 
-    with patch("cloudsoc.ansible.deploy.shutil.which", return_value=None):
-        assert ansible_service.run_playbook(str(playbook.name)) is False
+
+def test_deployment_service_runs_tasks(tmp_path):
+    """Test that deployment service can execute deployment tasks."""
+    deployment_dir = tmp_path / "deployments"
+    deployment_dir.mkdir()
+    
+    # Create a simple deployment YAML file
+    deployment_yaml = {
+        "name": "test_deployment",
+        "description": "Test deployment",
+        "tasks": [
+            {
+                "name": "Test task",
+                "type": "shell",
+                "cmd": "echo 'test'",
+                "skip_if_exists": "/nonexistent/path"
+            }
+        ]
+    }
+    
+    deployment_file = deployment_dir / "test_deploy.yml"
+    with open(deployment_file, "w") as f:
+        yaml.dump(deployment_yaml, f)
+    
+    deployment_service = DeploymentService(deployment_dir=deployment_dir)
+    
+    with patch("cloudsoc.deployment.executor.run_command") as mock_run:
+        mock_run.return_value = None
+        result = deployment_service.run_deployment("test_deploy", variables={})
+        assert result is True

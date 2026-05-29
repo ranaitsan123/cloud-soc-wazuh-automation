@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from rich.console import Console
 from rich.panel import Panel
 
-from cloudsoc.ansible.deploy import AnsibleService
+from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ec2 import EC2Service
 from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
@@ -100,7 +100,7 @@ class DeploymentOrchestrator:
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
         )
-        self.ansible_service = AnsibleService(playbooks_dir=Path("ansible/playbooks"))
+        self.deployment_service = DeploymentService(deployment_dir=Path("deployment"))
         self.inventory_generator = InventoryGenerator(self.ec2_service)
 
     def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
@@ -228,11 +228,11 @@ class DeploymentOrchestrator:
             "ecr_victim_repository_url": outputs.get("ecr_victim_repository_url", {}).get("value", "")
         }
 
-        if not self.ansible_service.run_playbook("wazuh_manager.yml", inventory=str(inventory_path), extra_vars=extra_vars_manager):
-            raise OrchestrationError("Wazuh manager playbook failed")
+        if not self.deployment_service.run_deployment("wazuh_manager", variables=extra_vars_manager):
+            raise OrchestrationError("Wazuh manager deployment failed")
 
-        if not self.ansible_service.run_playbook("victim_server.yml", inventory=str(inventory_path), extra_vars=extra_vars_victim):
-            raise OrchestrationError("Victim server playbook failed")
+        if not self.deployment_service.run_deployment("victim_server", variables=extra_vars_victim):
+            raise OrchestrationError("Victim server deployment failed")
 
     def _validate_deployment(self) -> None:
         wazuh_id = self._get_wazuh_instance_id()

@@ -26,7 +26,7 @@ Key goals:
 - Use **Typer** for CLI command handling
 - Wrap Terraform with `cloudsoc/terraform/runner.py`
 - Use **Boto3** service wrappers for AWS discovery
-- Generate Ansible inventory for **SSM-driven** configuration
+- Custom YAML-based deployment orchestration via **SSM**
 - Support safe AWS resource import into Terraform state
 - Provide a unified entrypoint: `cloud-soc`
 
@@ -37,11 +37,11 @@ Key goals:
 - `cloudsoc/terraform/runner.py` — Terraform wrapper and state management
 - `cloudsoc/terraform/imports.py` — automatic AWS resource discovery/import
 - `cloudsoc/aws/` — wrappers for EC2, IAM, S3, ECR, SSM
-- `cloudsoc/ansible/deploy.py` — Ansible orchestration support
+- `cloudsoc/deployment/executor.py` — Custom YAML deployment service
 - `cloudsoc/cleanup/services.py` — cleanup helpers for VPC and networking
 - `cloudsoc/config/settings.py` — `.env` configuration management
 - `terraform/` — infrastructure-as-code definitions
-- `ansible/` — runtime service configuration playbooks
+- `deployment/` — custom YAML deployment configurations
 - `docs/` — branch-aligned documentation
 
 ## ✅ Branch Key Features
@@ -51,7 +51,7 @@ Key goals:
 - **Safe resource import**: existing AWS resources are detected and imported before apply
 - **Infrastructure status**: `cloud-soc status` reports VPC/subnet/instance details
 - **SSM dashboard access**: `cloud-soc dashboard`
-- **Dynamic Ansible inventory**: generated from EC2 discovery
+- **Custom YAML deployments**: lightweight YAML-based configuration without Ansible
 - **Unified branch docs**: docs are aligned with this refactor branch
 
 ## 🔧 Installation
@@ -145,15 +145,15 @@ This branch is intended to be consumed through the Python orchestrator rather th
 2. Terraform init + optional AWS resource import
 3. Terraform validate + plan + apply
 4. Wait for SSM connectivity
-5. Generate Ansible inventory from EC2 instances
-6. Execute Ansible playbooks against target hosts
+5. Execute custom YAML deployments
+6. Validate deployment completion
 7. Print dashboard access instructions
 
 ### Platform behavior
 
 - Terraform operations are handled by `TerraformRunner`
 - AWS discovery is handled by Boto3 service classes
-- Wazuh configuration is deployed via Ansible on private instances
+- Wazuh configuration is deployed via custom YAML deployment service
 - Dashboard access uses SSM port forwarding via AWS CLI
 - Existing resources can be reused safely
 
@@ -168,9 +168,9 @@ This branch is intended to be consumed through the Python orchestrator rather th
 | `cloudsoc/aws/ec2.py` | EC2 discovery and helpers |
 | `cloudsoc/aws/iam.py` | IAM management helpers |
 | `cloudsoc/aws/ssm.py` | SSM session and command helpers |
-| `cloudsoc/ansible/deploy.py` | Ansible execution support |
+| `cloudsoc/deployment/executor.py` | Custom YAML deployment service |
 | `cloudsoc/config/settings.py` | Environment and settings loader |
-| `ansible/playbooks/` | Service deployment playbooks |
+| `deployment/` | Custom YAML deployment configurations |
 | `terraform/` | Infrastructure-as-code definitions |
 | `docs/` | Branch-specific documentation |
 
@@ -211,7 +211,6 @@ cloud-soc = "cloudsoc.main:app"
 - `pydantic>=2.0.0`
 - `python-dotenv>=1.0.0`
 - `pyyaml>=6.0`
-- `ansible-core>=2.14.0`
 
 ### Tests
 
@@ -223,7 +222,7 @@ pytest cloudsoc/tests/
 
 - `docs/README.md` — branch docs hub
 - `docs/1-getting-started/02-quick-start.md`
-- `docs/2-guides/ansible/deploy-wazuh.md`
+- `docs/2-guides/deployment/deploy-wazuh.md`
 - `docs/4-explanation/python-migration-guide.md`
 - `QUICKSTART.md`
 - `MIGRATION_GUIDE.md`
@@ -240,7 +239,7 @@ pytest cloudsoc/tests/
 
 This branch is the Python-first orchestration path for Cloud SOC. The core workflow is:
 
-- `cloud-soc apply` → provision infrastructure and run Ansible
+- `cloud-soc apply` → provision infrastructure and execute deployments
 - `cloud-soc status` → inspect deployed AWS resources
 - `cloud-soc dashboard` → access Wazuh via SSM
 - `cloud-soc destroy` → clean up infrastructure

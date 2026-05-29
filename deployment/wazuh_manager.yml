@@ -1,0 +1,121 @@
+name: Configure Wazuh Manager
+description: Deploy and configure Wazuh Manager services
+
+tasks:
+  - name: Update apt cache
+    type: shell
+    cmd: sudo apt-get update
+
+  - name: Install Wazuh Manager prerequisites
+    type: package
+    packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+      - git
+      - awscli
+      - python3
+      - python3-pip
+
+  - name: Install Docker GPG key
+    type: shell
+    cmd: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
+    skip_if_exists: /usr/share/keyrings/docker-archive-keyring.gpg
+
+  - name: Add Docker apt repository
+    type: shell
+    cmd: echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  - name: Update apt cache again
+    type: shell
+    cmd: sudo apt-get update
+
+  - name: Install Docker Engine and Compose plugin
+    type: package
+    packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+
+  - name: Install boto3 Python module
+    type: shell
+    cmd: sudo pip3 install boto3
+
+  - name: Create Wazuh directories
+    type: directory
+    paths:
+      - /opt/wazuh
+      - /opt/wazuh/config
+      - /opt/wazuh/config/wazuh_cluster
+      - /opt/wazuh/config/wazuh_indexer
+      - /opt/wazuh/config/wazuh_dashboard
+      - /opt/wazuh/config/wazuh_indexer_ssl_certs
+    mode: '0755'
+
+  - name: Download docker-compose.yml from S3
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/docker-compose.yml
+    dest: /opt/wazuh/docker-compose.yml
+    skip_if_exists: /opt/wazuh/docker-compose.yml
+
+  - name: Download generate-indexer-certs.yml from S3
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/generate-indexer-certs.yml
+    dest: /opt/wazuh/generate-indexer-certs.yml
+    skip_if_exists: /opt/wazuh/generate-indexer-certs.yml
+
+  - name: Download Wazuh manager config
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/certs.yml
+    dest: /opt/wazuh/config/certs.yml
+    skip_if_exists: /opt/wazuh/config/certs.yml
+
+  - name: Download Wazuh cluster config
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_cluster/wazuh_manager.conf
+    dest: /opt/wazuh/config/wazuh_cluster/wazuh_manager.conf
+    skip_if_exists: /opt/wazuh/config/wazuh_cluster/wazuh_manager.conf
+
+  - name: Download Wazuh indexer config
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_indexer/wazuh.indexer.yml
+    dest: /opt/wazuh/config/wazuh_indexer/wazuh.indexer.yml
+    skip_if_exists: /opt/wazuh/config/wazuh_indexer/wazuh.indexer.yml
+
+  - name: Download Wazuh indexer users
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_indexer/internal_users.yml
+    dest: /opt/wazuh/config/wazuh_indexer/internal_users.yml
+    skip_if_exists: /opt/wazuh/config/wazuh_indexer/internal_users.yml
+
+  - name: Download Wazuh dashboard config
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_dashboard/opensearch_dashboards.yml
+    dest: /opt/wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+    skip_if_exists: /opt/wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+
+  - name: Download Wazuh dashboard Wazuh config
+    type: download
+    source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/config/wazuh_dashboard/wazuh.yml
+    dest: /opt/wazuh/config/wazuh_dashboard/wazuh.yml
+    skip_if_exists: /opt/wazuh/config/wazuh_dashboard/wazuh.yml
+
+  - name: Generate certificates if needed
+    type: shell
+    cmd: |
+      if [ ! -d /opt/wazuh/config/wazuh_indexer_ssl_certs ] || [ -z "$(ls -A /opt/wazuh/config/wazuh_indexer_ssl_certs 2>/dev/null)" ]; then
+        cd /opt/wazuh
+        docker compose -f generate-indexer-certs.yml run --rm generator
+      fi
+
+  - name: Fix permissions for /opt/wazuh
+    type: shell
+    cmd: sudo chown -R $(whoami):$(whoami) /opt/wazuh && sudo chmod -R 755 /opt/wazuh
+
+  - name: Start Wazuh services with Docker Compose
+    type: docker
+    operation: compose_up
+    cwd: /opt/wazuh
+    compose_file: docker-compose.yml

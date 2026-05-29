@@ -127,18 +127,20 @@ vpc_cleanup = VPCCleanupService()
 vpc_cleanup.cleanup_vpc_instances(vpc_id=vpc.id)
 ```
 
-#### 4. Run Ansible Playbook
+#### 4. Run Custom YAML Deployment
 
 ```python
-from cloudsoc.ansible.deploy import AnsibleService
+from cloudsoc.deployment.executor import DeploymentService
 from pathlib import Path
 
-ansible = AnsibleService(playbooks_dir=Path("ansible/playbooks"))
+deployment = DeploymentService(deployment_dir=Path("deployment"))
 
-success = ansible.run_playbook(
-    "configure-wazuh.yml",
-    inventory="inventory/aws_ec2.yml",
-    extra_vars={"wazuh_manager_ip": "10.0.1.10"}
+success = deployment.run_deployment(
+    "wazuh_manager",
+    variables={
+        "s3_bucket_name": "cloud-soc-wazuh-assets",
+        "s3_prefix": "wazuh-docker"
+    }
 )
 ```
 

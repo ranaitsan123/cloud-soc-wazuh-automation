@@ -4,7 +4,7 @@ This section contains how-to guides for key workflows in the project.
 
 ## Contents
 
-- [Ansible Deployment Guide](ansible/README.md)
+- [Custom YAML Deployment Guide](deployment/README.md)
 
 ## Purpose
 
@@ -17,5 +17,5 @@ Use this section to:
 ## Recommended workflow
 
 1. Read the Getting Started section.
-2. Use the Ansible guide to deploy Wazuh and Victim services.
+2. Use the Deployment guide to deploy Wazuh and Victim services.
 3. Refer to Reference docs for architecture and IAM details.

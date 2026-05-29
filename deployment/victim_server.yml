@@ -1,0 +1,97 @@
+name: Configure Victim Server
+description: Install Wazuh agent, Docker, and run victim container
+
+tasks:
+  - name: Update apt cache
+    type: shell
+    cmd: sudo apt-get update
+
+  - name: Install Victim server prerequisites
+    type: package
+    packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - software-properties-common
+      - git
+      - wget
+      - awscli
+      - python3
+      - python3-pip
+
+  - name: Install Docker GPG key
+    type: shell
+    cmd: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
+    skip_if_exists: /usr/share/keyrings/docker-archive-keyring.gpg
+
+  - name: Add Docker apt repository
+    type: shell
+    cmd: echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  - name: Update apt cache again
+    type: shell
+    cmd: sudo apt-get update
+
+  - name: Install Docker Engine and Compose plugin
+    type: package
+    packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+
+  - name: Install Wazuh repository GPG key
+    type: shell
+    cmd: curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --dearmour -o /usr/share/keyrings/wazuh.gpg
+    skip_if_exists: /usr/share/keyrings/wazuh.gpg
+
+  - name: Add Wazuh agent repository
+    type: shell
+    cmd: echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | sudo tee /etc/apt/sources.list.d/wazuh.list > /dev/null
+
+  - name: Update apt cache for Wazuh
+    type: shell
+    cmd: sudo apt-get update
+
+  - name: Install Wazuh agent
+    type: package
+    packages:
+      - wazuh-agent
+
+  - name: Enable Wazuh agent service
+    type: service
+    name: wazuh-agent
+    state: started
+    enabled: true
+
+  - name: Create /opt/fortress directory
+    type: directory
+    paths:
+      - /opt/fortress
+    mode: '0755'
+
+  - name: Configure Wazuh agent manager connection
+    type: shell
+    cmd: |
+      sudo sed -i '/<manager>/,/<\/manager>/c\      <manager>\n        <address>{{ wazuh_manager_ip }}</address>\n      </manager>' /var/ossec/etc/ossec.conf
+      sudo systemctl restart wazuh-agent
+
+  - name: Login to ECR
+    type: shell
+    cmd: |
+      aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin $(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f1)
+
+  - name: Pull victim container image from ECR
+    type: shell
+    cmd: docker pull {{ ecr_victim_repository_url }}:latest
+
+  - name: Start victim container
+    type: shell
+    cmd: |
+      docker run -d \
+        --name victim-art \
+        --restart always \
+        -v /opt/fortress:/opt/fortress \
+        {{ ecr_victim_repository_url }}:latest \
+        tail -f /dev/null
