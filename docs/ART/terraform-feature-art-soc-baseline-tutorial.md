@@ -185,19 +185,19 @@ Then open:
 https://127.0.0.1:8443
 ```
 
-## Ansible documentation and attack workflow
+## Deployment documentation and attack workflow
 
-A full explanation of the new SSM + Ansible deployment plan is available in `docs/ansible/README.md`.
+A full explanation of the YAML-based remote deployment plan is available in `docs/2-guides/deployment/README.md`.
 
-To execute an Atomic Red Team attack on the victim instance via SSM, use the Python orchestrator to run an Ansible task or an ad-hoc SSM command that invokes PowerShell inside the victim container. The repository no longer provides the older `scripts/run-atomic-attack.sh` helper.
+To execute an Atomic Red Team attack on the victim instance via SSM, use the Python orchestrator to run a remote shell command or deploy a custom task that invokes PowerShell inside the victim container. The repository no longer provides the older `scripts/run-atomic-attack.sh` helper.
 
-Example (ad-hoc via Ansible/SSM): create an Ansible task that runs the following on the target host:
+Example (remote via SSM): run the following on the target host:
 
 ```bash
 pwsh -Command "Invoke-AtomicTest T1053.005 -PathToAtomics /opt/fortress/atomics"
 ```
 
-Execute that task via the orchestration layer so the command is delivered through `AWS-RunShellScript` over SSM.
+Execute that command through the orchestration layer so it is delivered over `AWS-RunShellScript` via SSM.
 
 ## Notes and next steps
 

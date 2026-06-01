@@ -5,46 +5,7 @@ from unittest.mock import Mock, patch
 import yaml
 
 from cloudsoc.deployment.executor import DeploymentService
-from cloudsoc.models.resources import EC2Instance
-from cloudsoc.orchestrator import InventoryGenerator
 from cloudsoc.aws.ssm import SSMService
-
-
-def test_inventory_generator_groups_hosts(tmp_path):
-    mock_ec2 = Mock()
-    mock_ec2.find_instances.return_value = [
-        EC2Instance(
-            id="i-0",
-            type="t3.micro",
-            state="running",
-            private_ip="10.0.1.10",
-            public_ip=None,
-            vpc_id="vpc-123",
-            subnet_id="subnet-123",
-            tags={"Name": "wazuh-manager", "Project": "cloud-soc"}
-        ),
-        EC2Instance(
-            id="i-1",
-            type="t3.micro",
-            state="running",
-            private_ip="10.0.2.10",
-            public_ip=None,
-            vpc_id="vpc-123",
-            subnet_id="subnet-123",
-            tags={"Name": "victim-server", "Project": "cloud-soc"}
-        )
-    ]
-
-    inventory_path = tmp_path / "generated_hosts.ini"
-    generator = InventoryGenerator(mock_ec2, inventory_path=inventory_path)
-    result_path = generator.generate(project_tag="cloud-soc")
-
-    assert result_path == inventory_path
-    contents = inventory_path.read_text()
-    assert "[wazuh]" in contents
-    assert "10.0.1.10" in contents
-    assert "[victims]" in contents
-    assert "10.0.2.10" in contents
 
 
 def test_ssm_wait_for_instance_online():
@@ -68,6 +29,42 @@ def test_deployment_service_missing_file(tmp_path):
     
     result = deployment_service.run_deployment("nonexistent", variables={})
     assert result is False
+
+
+def test_deployment_service_remote_execution(tmp_path):
+    deployment_dir = tmp_path / "deployments"
+    deployment_dir.mkdir()
+
+    deployment_yaml = {
+        "name": "test_remote_deployment",
+        "description": "Test remote deployment",
+        "tasks": [
+            {
+                "name": "Echo test",
+                "type": "shell",
+                "cmd": "echo hello"
+            }
+        ]
+    }
+
+    deployment_file = deployment_dir / "test_remote.yml"
+    with open(deployment_file, "w") as f:
+        yaml.dump(deployment_yaml, f)
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.return_value = "command-123"
+    mock_ssm.wait_for_command.return_value = {"status": "Success", "return_code": 0, "output": "hello"}
+
+    deployment_service = DeploymentService(deployment_dir=deployment_dir)
+    result = deployment_service.run_deployment(
+        "test_remote",
+        variables={},
+        ssm_service=mock_ssm,
+        instance_ids=["i-123"]
+    )
+
+    assert result is True
+    mock_ssm.send_command.assert_called_once()
 
 
 def test_deployment_service_runs_tasks(tmp_path):

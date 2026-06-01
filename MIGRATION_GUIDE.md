@@ -66,8 +66,8 @@ cloud-soc/
 │   │   ├── s3.py                  # S3 operations
 │   │   └── __init__.py
 │   │
-│   ├── ansible/                   # Ansible integration
-│   │   ├── deploy.py
+│   ├── deployment/                # YAML deployment integration
+│   │   ├── executor.py
 │   │   └── __init__.py
 │   │
 │   ├── cleanup/                   # Cleanup and maintenance

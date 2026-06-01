@@ -43,14 +43,14 @@ AWS
 
 ## Project Structure
 
-The Python orchestration project is organized around a package structure that separates CLI, Terraform orchestration, AWS services, Ansible integration, cleanup code, and configuration.
+The Python orchestration project is organized around a package structure that separates CLI, Terraform orchestration, AWS services, custom deployment definitions, cleanup code, and configuration.
 
 ### Key components
 
 - `cloudsoc/main.py` — Typer CLI entry point
 - `cloudsoc/terraform/runner.py` — Terraform wrapper
 - `cloudsoc/aws` — AWS service modules
-- `cloudsoc/ansible` — Ansible integration
+- `cloudsoc/deployment` — YAML deployment integration
 - `cloudsoc/cleanup` — cleanup and maintenance workflows
 - `cloudsoc/config/settings.py` — configuration management
 
@@ -59,7 +59,7 @@ The Python orchestration project is organized around a package structure that se
 - eliminate brittle Bash and CLI parsing
 - provide safer typed models for AWS resources
 - unify workflow in Python with better error handling
-- keep infrastructure stable while moving configuration logic to Ansible
+- keep infrastructure stable while moving configuration logic to a YAML-based deployment system
 
 ## Notes
 

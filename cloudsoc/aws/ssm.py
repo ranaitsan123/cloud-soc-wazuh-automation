@@ -47,7 +47,7 @@ class SSMService:
             kwargs = {
                 "InstanceIds": instance_ids,
                 "DocumentName": document_name,
-                "Parameters": {"command": commands},
+                "Parameters": {"commands": commands},
                 "TimeoutSeconds": timeout
             }
 

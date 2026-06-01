@@ -111,5 +111,5 @@ vpc = ec2.find_vpc(project_tag="cloud-soc")
 
 ## Next Steps
 
-- [Ansible Deployment Guide](../2-guides/ansible/README.md)
+- [Deployment Guide](../2-guides/deployment/README.md)
 - [Python Migration Guide](../4-explanation/python-migration-guide.md)

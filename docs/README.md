@@ -13,8 +13,7 @@ This repository contains architecture, deployment, automation, and troubleshooti
 
 - **2. Guides** — How-to workflows and step-by-step operational guides
   - `docs/2-guides/README.md`
-  - `docs/2-guides/ansible/README.md`
-  - `docs/2-guides/ansible/deploy-wazuh.md`
+  - `docs/2-guides/deployment/README.md`
 
 - **3. Reference** — Technical reference and architecture details
   - `docs/3-reference/README.md`
@@ -33,7 +32,7 @@ This repository contains architecture, deployment, automation, and troubleshooti
 ## How to Use This Documentation
 
 1. Start in **Getting Started** for installation and quick-start commands.
-2. Use **Guides** for workflow-specific instructions such as Ansible deployment.
+2. Use **Guides** for workflow-specific instructions such as deployment and runtime configuration.
 3. Consult **Reference** for architecture, IAM, and Terraform details.
 4. Read **Explanation** for migration history and operational scenarios.
 5. Visit **Troubleshooting** when you need recovery or cleanup assistance.
@@ -47,6 +46,6 @@ Some older documentation files have been moved into the archive folder while the
 - `docs/legacy/CLEANUP.md`
 - `docs/legacy/iam-permissions.md`
 - `docs/legacy/operational-scenarios.md`
-- `docs/legacy/ansible-README.md`
+- `docs/legacy/ansible-README.md` (legacy Ansible workflow reference)
 
 > The new structure is designed to keep docs organized, easy to navigate, and aligned with a standard four-part documentation model.

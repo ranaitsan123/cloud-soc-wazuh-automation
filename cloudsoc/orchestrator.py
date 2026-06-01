@@ -9,7 +9,6 @@ from rich.console import Console
 from rich.panel import Panel
 
 from cloudsoc.deployment.executor import DeploymentService
-from cloudsoc.aws.ec2 import EC2Service
 from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.config.settings import Settings, get_settings
@@ -19,62 +18,14 @@ from cloudsoc.utils.logger import logger
 from cloudsoc.utils.shell import run_command, ShellCommandError
 
 console = Console()
-DEFAULT_INVENTORY_FILE = Path("inventory/generated_hosts.ini")
 
 
 class OrchestrationError(Exception):
     """Raised when orchestration fails."""
 
 
-class InventoryGenerator:
-    """Builds dynamic Ansible inventory from AWS EC2 discovery."""
-
-    def __init__(self, ec2_service: EC2Service, inventory_path: Path = DEFAULT_INVENTORY_FILE):
-        self.ec2_service = ec2_service
-        self.inventory_path = inventory_path
-
-    def generate(self, project_tag: str) -> Path:
-        """Generate an inventory file for EC2 instances in the project."""
-        instances = self.ec2_service.find_instances(project_tag=project_tag, states=["running"])
-
-        if not instances:
-            raise OrchestrationError("No running EC2 instances found for inventory generation")
-
-        group_hosts: Dict[str, List[str]] = {"wazuh": [], "victims": []}
-
-        for instance in instances:
-            name = instance.tags.get("Name", "").lower()
-            role = instance.tags.get("Role", "").lower()
-            host_entry = (
-                f"{instance.id} ansible_connection=amazon.aws.aws_ssm "
-                "ansible_python_interpreter=/usr/bin/python3"
-            )
-
-            if "wazuh" in name or "wazuh" in role or "manager" in name or "manager" in role:
-                group_hosts["wazuh"].append(host_entry)
-            else:
-                group_hosts["victims"].append(host_entry)
-
-        if not any(group_hosts.values()):
-            raise OrchestrationError("Inventory generation did not discover any hosts")
-
-        self.inventory_path.parent.mkdir(parents=True, exist_ok=True)
-        lines: List[str] = []
-
-        for group, hosts in group_hosts.items():
-            if not hosts:
-                continue
-            lines.append(f"[{group}]")
-            lines.extend(hosts)
-            lines.append("")
-
-        self.inventory_path.write_text("\n".join(lines).strip() + "\n")
-        logger.info(f"✓ Generated inventory at {self.inventory_path}")
-        return self.inventory_path
-
-
 class DeploymentOrchestrator:
-    """Coordinates Terraform, AWS, SSM, and Ansible deployment steps."""
+    """Coordinates Terraform, AWS, SSM, and YAML deployment execution."""
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
@@ -91,17 +42,12 @@ class DeploymentOrchestrator:
             auto_approve=self.settings.project.terraform.auto_approve,
             backend_config=backend_config,
         )
-        self.ec2_service = EC2Service(
-            region=self.settings.project.aws.region,
-            profile=self.settings.project.aws.profile
-        )
         self.iam_service = IAMService(profile=self.settings.project.aws.profile)
         self.ssm_service = SSMService(
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
         )
         self.deployment_service = DeploymentService(deployment_dir=Path("deployment"))
-        self.inventory_generator = InventoryGenerator(self.ec2_service)
 
     def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
         """Apply infrastructure and perform post-apply orchestration."""
@@ -112,8 +58,7 @@ class DeploymentOrchestrator:
         self.tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
 
         self._wait_for_ssm_ready()
-        inventory_path = self.inventory_generator.generate(self.settings.project.tag)
-        self._run_playbooks(inventory_path)
+        self._run_playbooks()
         self._validate_deployment()
         self._print_dashboard_instructions()
 
@@ -177,36 +122,6 @@ class DeploymentOrchestrator:
         except ShellCommandError as e:
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
 
-    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> bool:
-        """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
-        command = [
-            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port}"
-        ]
-        command_id = self.ssm_service.send_command(
-            instance_ids=[instance_id],
-            commands=command,
-            working_directory="/tmp",
-            timeout=60,
-            document_name="AWS-RunShellScript"
-        )
-
-        if not command_id:
-            logger.warning("Unable to send dashboard health check command via SSM")
-            return False
-
-        invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=90, poll_interval=5)
-        if not invocation:
-            logger.warning("Dashboard health check command did not complete")
-            return False
-
-        if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
-            logger.warning(
-                f"Dashboard health check failed: status={invocation.get('status')} return_code={invocation.get('return_code')}"
-            )
-            return False
-
-        return invocation.get("output", "") == "200"
-
     def _wait_for_ssm_ready(self) -> None:
         instance_ids = self._get_instance_ids()
         if not instance_ids:
@@ -216,8 +131,14 @@ class DeploymentOrchestrator:
             if not self.ssm_service.wait_for_instance(instance_id, timeout=600, poll_interval=15):
                 raise OrchestrationError(f"SSM agent did not become ready for instance {instance_id}")
 
-    def _run_playbooks(self, inventory_path: Path) -> None:
+    def _run_playbooks(self) -> None:
         outputs = self.tf_runner.output()
+        wazuh_instance_id = outputs.get("wazuh_instance_id", {}).get("value")
+        victim_instance_id = outputs.get("victim_instance_id", {}).get("value")
+
+        if not wazuh_instance_id or not victim_instance_id:
+            raise OrchestrationError("Missing instance IDs for remote deployment")
+
         extra_vars_manager = {
             "s3_bucket_name": outputs.get("s3_bucket_name", {}).get("value", ""),
             "s3_prefix": outputs.get("s3_prefix", {}).get("value", "wazuh-docker")
@@ -228,10 +149,20 @@ class DeploymentOrchestrator:
             "ecr_victim_repository_url": outputs.get("ecr_victim_repository_url", {}).get("value", "")
         }
 
-        if not self.deployment_service.run_deployment("wazuh_manager", variables=extra_vars_manager):
+        if not self.deployment_service.run_deployment(
+            "wazuh_manager",
+            variables=extra_vars_manager,
+            ssm_service=self.ssm_service,
+            instance_ids=[wazuh_instance_id],
+        ):
             raise OrchestrationError("Wazuh manager deployment failed")
 
-        if not self.deployment_service.run_deployment("victim_server", variables=extra_vars_victim):
+        if not self.deployment_service.run_deployment(
+            "victim_server",
+            variables=extra_vars_victim,
+            ssm_service=self.ssm_service,
+            instance_ids=[victim_instance_id],
+        ):
             raise OrchestrationError("Victim server deployment failed")
 
     def _validate_deployment(self) -> None:

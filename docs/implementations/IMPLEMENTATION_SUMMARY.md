@@ -62,13 +62,13 @@
 **Key File:**
 - `cloudsoc/cleanup/services.py` - Cleanup operations
 
-### ✅ Phase 7: Ansible & SSM Services (100%)
-- `AnsibleService` - Playbook and ad-hoc execution
+### ✅ Phase 7: YAML Deployment & SSM Services (100%)
+- `DeploymentService` - Custom YAML deployment execution
 - `SSMService` - Port forwarding, parameters, commands
 
 **Key Files:**
-- `cloudsoc/ansible/deploy.py` - Ansible integration
-- (SSM included in S3 service suite)
+- `cloudsoc/deployment/executor.py` - YAML deployment integration
+- `cloudsoc/aws/ssm.py` - SSM command execution
 
 ### ✅ Phase 8: Logging & Configuration (100%)
 - Structured logging with file and console output
@@ -127,8 +127,8 @@ cloud-soc-wazuh-automation/
 │   │   ├── ssm.py                           # SSM service ✅
 │   │   └── __init__.py
 │   │
-│   ├── ansible/
-│   │   ├── deploy.py                        # Ansible service ✅
+│   ├── deployment/
+│   │   ├── executor.py                      # YAML deployment integration ✅
 │   │   └── __init__.py
 │   │
 │   ├── cleanup/
