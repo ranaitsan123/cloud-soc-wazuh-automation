@@ -12,47 +12,86 @@
 
 </div>
 
-> **Branch-specific README:** This document is oriented to the `refactor/python-orchestrator` branch and describes the Python-based orchestration platform implemented in this branch.
+> **Branch-specific README:** This document describes the `refactor/python-orchestrator-v2` branch with a **two-stage orchestration platform** for AWS infrastructure and Wazuh SOC deployment.
 
 ---
 
 ## 🚀 Branch Overview
 
-This branch refactors the repository around a **Python orchestration platform** for AWS infrastructure and Wazuh SOC deployment.
+This branch implements a **Python-first orchestration platform** with clear separation between infrastructure provisioning and service deployment.
 
-Key goals:
+### Key Architecture
 
-- Replace legacy Bash orchestration with a typed Python CLI
+- **Stage 1 - Infrastructure** (`cloud-soc apply`): Terraform-based AWS provisioning only
+- **Stage 2 - Deployment** (`cloud-soc deploy`): Service configuration via SSM and custom YAML
+
+### Goals
+
+- Replace legacy monolithic orchestration with focused Python orchestrators
 - Use **Typer** for CLI command handling
 - Wrap Terraform with `cloudsoc/terraform/runner.py`
 - Use **Boto3** service wrappers for AWS discovery
 - Custom YAML-based deployment orchestration via **SSM**
 - Support safe AWS resource import into Terraform state
-- Provide a unified entrypoint: `cloud-soc`
+- Provide unified entrypoint: `cloud-soc`
+- **Clear failure attribution**: Know exactly what failed
+- **Independent operations**: Retry stages without reprovisioning
+- **Future scalability**: Easy to add new deployment targets
 
 ## 📌 What This Branch Contains
 
-- `cloudsoc/main.py` — Typer CLI entrypoint
-- `cloudsoc/orchestrator.py` — deployment orchestration and dashboard helpers
+### Orchestration System
+
+- `cloudsoc/main.py` — Typer CLI entrypoint with command definitions
+- `cloudsoc/orchestrator.py` — **Three focused orchestrator classes:**
+  - `TerraformOrchestrator` — Infrastructure lifecycle (init, validate, plan, apply, destroy)
+  - `DeploymentOrchestrator` — Service deployment and SSM management
+  - `DashboardOrchestrator` — Dashboard access via SSM tunneling
+
+### Infrastructure & AWS Integration
+
 - `cloudsoc/terraform/runner.py` — Terraform wrapper and state management
 - `cloudsoc/terraform/imports.py` — automatic AWS resource discovery/import
-- `cloudsoc/aws/` — wrappers for EC2, IAM, S3, ECR, SSM
+- `cloudsoc/aws/` — Boto3 service wrappers (EC2, IAM, S3, ECR, SSM)
 - `cloudsoc/deployment/executor.py` — Custom YAML deployment service
-- `cloudsoc/cleanup/services.py` — cleanup helpers for VPC and networking
+- `cloudsoc/cleanup/services.py` — VPC and networking cleanup helpers
 - `cloudsoc/config/settings.py` — `.env` configuration management
+
+### Infrastructure & Deployment
+
 - `terraform/` — infrastructure-as-code definitions
 - `deployment/` — custom YAML deployment configurations
-- `docs/` — branch-aligned documentation
+- `docs/` — comprehensive branch-aligned documentation
 
 ## ✅ Branch Key Features
 
-- **Python CLI Orchestration**: all deploy actions use `cloud-soc`
+### Two-Stage Workflow
+
+```bash
+# Stage 1: Infrastructure only (Terraform)
+cloud-soc apply --auto-approve
+
+# Stage 2: Services only (SSM + Deployments)
+cloud-soc deploy
+
+# Access dashboard
+cloud-soc dashboard
+```
+
+### Core Features
+
+- **Python CLI Orchestration**: All deploy actions use `cloud-soc` command
 - **Terraform automation**: init, validate, plan, apply, destroy
-- **Safe resource import**: existing AWS resources are detected and imported before apply
+- **Safe resource import**: Existing AWS resources detected and imported
 - **Infrastructure status**: `cloud-soc status` reports VPC/subnet/instance details
-- **SSM dashboard access**: `cloud-soc dashboard`
-- **Custom YAML deployments**: lightweight YAML-based configuration without Ansible
-- **Unified branch docs**: docs are aligned with this refactor branch
+- **SSM dashboard access**: `cloud-soc dashboard` with port forwarding
+- **Target-based deployments**: Deploy individual services independently
+  - `cloud-soc deploy` — Deploy all services
+  - `cloud-soc deploy wazuh` — Deploy only Wazuh
+  - `cloud-soc deploy victim` — Deploy only victim
+- **Custom YAML deployments**: Lightweight configuration without Ansible
+- **Independent retry**: Redeploy services without infrastructure changes
+- **Future-ready**: Easy to add new deployment targets
 
 ## 🔧 Installation
 
@@ -73,7 +112,7 @@ Required variables:
 - `AWS_DEFAULT_REGION`
 - `PROJECT_TAG=cloud-soc`
 
-## 🧪 Use the Python Orchestrator CLI
+## 🧪 Quick Start
 
 ### CLI entrypoint
 
@@ -81,88 +120,154 @@ Required variables:
 cloud-soc --help
 ```
 
-### Important commands
+### Common Commands
+
+#### Infrastructure & Status
 
 ```bash
+# Check current state
 cloud-soc status
+
+# Validate configuration
 cloud-soc validate
-cloud-soc apply
-cloud-soc destroy
-cloud-soc dashboard
-cloud-soc import aws_vpc.wazuh_vpc vpc-0123456789abcdef0
-cloud-soc version
-```
 
-### Apply infrastructure
-
-```bash
-cloud-soc apply
-```
-
-```bash
+# Provision infrastructure (Terraform only)
 cloud-soc apply --auto-approve
-```
 
-```bash
-cloud-soc apply --var-file prod.tfvars
-```
-
-### Destroy infrastructure
-
-```bash
-cloud-soc destroy
-```
-
-```bash
+# Destroy infrastructure
 cloud-soc destroy --auto-approve --force
 ```
 
-### Dashboard access via SSM
+#### Deployment
 
 ```bash
+# Deploy all services
+cloud-soc deploy
+
+# Deploy specific services
+cloud-soc deploy wazuh
+cloud-soc deploy victim
+cloud-soc deploy wazuh victim
+
+# Skip validation
+cloud-soc deploy --skip-validation
+```
+
+#### Access & Management
+
+```bash
+# Open Wazuh dashboard via SSM tunnel
 cloud-soc dashboard
-```
 
-Then open:
-
-```bash
-https://127.0.0.1:8443
-```
-
-### Import an existing AWS resource
-
-```bash
+# Import existing AWS resource
 cloud-soc import aws_vpc.wazuh_vpc vpc-0123456789abcdef0
+
+# Show version
+cloud-soc version
 ```
 
-## 💡 Branch-Specific Workflow
+## 💡 Typical Workflow
 
-This branch is intended to be consumed through the Python orchestrator rather than raw Terraform or shell scripts.
+### Step-by-step deployment
 
-### Orchestrator flow
+```bash
+# 1. Provision infrastructure (15-20 minutes)
+cloud-soc apply --auto-approve
 
-1. `cloud-soc apply`
-2. Terraform init + optional AWS resource import
-3. Terraform validate + plan + apply
-4. Wait for SSM connectivity
-5. Execute custom YAML deployments
-6. Validate deployment completion
-7. Print dashboard access instructions
+# 2. Wait for instances to boot
+sleep 30
 
-### Platform behavior
+# 3. Deploy services (10-15 minutes)
+cloud-soc deploy
 
-- Terraform operations are handled by `TerraformRunner`
-- AWS discovery is handled by Boto3 service classes
-- Wazuh configuration is deployed via custom YAML deployment service
-- Dashboard access uses SSM port forwarding via AWS CLI
-- Existing resources can be reused safely
+# 4. Check deployment status
+cloud-soc status
+
+# 5. Access dashboard
+cloud-soc dashboard
+
+# Open in browser: https://127.0.0.1:8443
+
+# 6. Cleanup when done
+cloud-soc destroy --auto-approve --force
+```
+
+### Deployment with individual targets
+
+```bash
+# Deploy infrastructure
+cloud-soc apply --auto-approve
+
+# Deploy Wazuh first
+cloud-soc deploy wazuh
+
+# Verify and then deploy victim
+cloud-soc deploy victim
+```
+
+### Fix and retry (without reprovisioning)
+
+```bash
+# Initial deployment fails
+cloud-soc deploy
+
+# Fix deployment YAML or check logs...
+
+# Retry only the failed service
+cloud-soc deploy wazuh  # Infrastructure still exists!
+```
+
+## 🏗️ Architecture
+
+### Three-Tier Orchestration
+
+```
+┌──────────────────────────────────┐
+│      CLI Commands (Typer)        │
+│  apply | deploy | dashboard      │
+└───────┬──────────────┬───────────┘
+        │              │
+        v              v
+    ┌─────────────────────────────────┐
+    │    Orchestrators                 │
+    │  (cloudsoc/orchestrator.py)      │
+    ├─ TerraformOrchestrator          │
+    ├─ DeploymentOrchestrator         │
+    └─ DashboardOrchestrator          │
+        │
+        v
+    ┌─────────────────────────────────┐
+    │    AWS Services                  │
+    │  (cloudsoc/aws/)                 │
+    ├─ TerraformRunner                │
+    ├─ SSMService                     │
+    ├─ DeploymentService              │
+    └─ EC2Service                     │
+        │
+        v
+    ┌─────────────────────────────────┐
+    │    AWS Resources                 │
+    │  (EC2, SSM, S3, IAM, etc.)      │
+    └─────────────────────────────────┘
+```
+
+### Command Mapping
+
+| Command | Orchestrator | Purpose |
+|---------|--------------|---------|
+| `cloud-soc apply` | TerraformOrchestrator | Provision AWS infrastructure |
+| `cloud-soc deploy [targets]` | DeploymentOrchestrator | Deploy services via SSM |
+| `cloud-soc dashboard` | DashboardOrchestrator | Access Wazuh dashboard |
+| `cloud-soc status` | EC2Service | Show infrastructure status |
+| `cloud-soc validate` | TerraformRunner | Validate configuration |
+| `cloud-soc destroy` | TerraformRunner | Destroy infrastructure |
 
 ## 🧱 Important Branch Files
 
 | Path | Description |
 |---|---|
-| `cloudsoc/main.py` | CLI command definitions |
-| `cloudsoc/orchestrator.py` | Deployment orchestration logic |
+| `cloudsoc/main.py` | CLI command definitions (Typer) |
+| `cloudsoc/orchestrator.py` | **Three orchestrator classes** (refactored) |
 | `cloudsoc/terraform/runner.py` | Terraform command wrapper |
 | `cloudsoc/terraform/imports.py` | Safe AWS resource import logic |
 | `cloudsoc/aws/ec2.py` | EC2 discovery and helpers |
@@ -172,7 +277,31 @@ This branch is intended to be consumed through the Python orchestrator rather th
 | `cloudsoc/config/settings.py` | Environment and settings loader |
 | `deployment/` | Custom YAML deployment configurations |
 | `terraform/` | Infrastructure-as-code definitions |
-| `docs/` | Branch-specific documentation |
+| `docs/` | Comprehensive branch documentation |
+
+## 📚 Documentation
+
+### Getting Started
+
+- **[QUICKSTART.md](QUICKSTART.md)** — 5-minute setup
+- **[docs/1-getting-started/02-quick-start.md](docs/1-getting-started/02-quick-start.md)** — Detailed quick start
+
+### Guides
+
+- **[docs/2-guides/deployment/deploy-wazuh.md](docs/2-guides/deployment/deploy-wazuh.md)** — Complete deployment guide
+- **[docs/2-guides/deployment/README.md](docs/2-guides/deployment/README.md)** — Deployment overview
+
+### Reference
+
+- **[docs/3-reference/orchestrator-architecture.md](docs/3-reference/orchestrator-architecture.md)** — Technical architecture and API reference
+- **[docs/3-reference/README.md](docs/3-reference/README.md)** — Reference documentation hub
+- **[docs/3-reference/iam-permissions.md](docs/3-reference/iam-permissions.md)** — IAM security model
+
+### Other
+
+- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** — Migrating from old branches
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** — Quick command reference
+- **[docs/README.md](docs/README.md)** — Documentation hub
 
 ## 🧰 Recommended Local Workflow
 
@@ -189,8 +318,53 @@ cloud-soc status
 ```bash
 pip install -e .
 cloud-soc validate
-cloud-soc apply
+cloud-soc apply --auto-approve
+cloud-soc deploy
+cloud-soc status
 ```
+
+## 💻 Python API
+
+### Infrastructure Provisioning
+
+```python
+from cloudsoc.orchestrator import TerraformOrchestrator
+
+tf = TerraformOrchestrator()
+tf.init()
+tf.validate()
+plan = tf.plan()
+tf.apply(plan_file=plan, auto_approve=True)
+outputs = tf.output()
+```
+
+### Service Deployment
+
+```python
+from cloudsoc.orchestrator import DeploymentOrchestrator
+
+deployment = DeploymentOrchestrator()
+
+# Wait for instances
+deployment.wait_for_ssm_ready([instance_id])
+
+# Deploy services
+deployment.deploy_targets(outputs, targets=["wazuh"])
+
+# Validate
+deployment.validate_deployment(outputs)
+```
+
+### Dashboard Access
+
+```python
+from cloudsoc.orchestrator import DashboardOrchestrator
+
+dashboard = DashboardOrchestrator()
+dashboard.open_tunnel(outputs, local_port=8443)
+```
+
+See [Orchestrator Architecture](docs/3-reference/orchestrator-architecture.md) for complete API reference.
 
 ## 🔍 Developer Notes
 
@@ -205,12 +379,12 @@ cloud-soc = "cloudsoc.main:app"
 
 ### Dependencies
 
-- `typer>=0.9.0`
-- `rich>=13.0.0`
-- `boto3>=1.26.0`
-- `pydantic>=2.0.0`
-- `python-dotenv>=1.0.0`
-- `pyyaml>=6.0`
+- `typer>=0.9.0` — CLI framework
+- `rich>=13.0.0` — Terminal formatting
+- `boto3>=1.26.0` — AWS SDK
+- `pydantic>=2.0.0` — Configuration validation
+- `python-dotenv>=1.0.0` — Environment management
+- `pyyaml>=6.0` — YAML deployment parsing
 
 ### Tests
 
@@ -218,30 +392,53 @@ cloud-soc = "cloudsoc.main:app"
 pytest cloudsoc/tests/
 ```
 
-## 📘 Branch Documentation
+## ⚠️ Key Points
 
-- `docs/README.md` — branch docs hub
-- `docs/1-getting-started/02-quick-start.md`
-- `docs/2-guides/deployment/deploy-wazuh.md`
-- `docs/4-explanation/python-migration-guide.md`
-- `QUICKSTART.md`
-- `MIGRATION_GUIDE.md`
-- `QUICK_REFERENCE.md`
+### Why Two Stages?
 
-## ⚠️ Notes
+The `apply` and `deploy` split provides:
 
-- This README is intentionally branch-specific for `refactor/python-orchestrator`.
-- Use `cloud-soc` as the primary entrypoint.
-- Avoid direct Terraform CLI use unless you understand the branch-specific orchestration model.
-- Existing AWS resources are imported into state automatically when possible.
+- ✅ **Clear failure attribution** — Know exactly what failed
+- ✅ **Independent operations** — Retry failed stages without reprovisioning
+- ✅ **Better diagnostics** — Focused logging for each stage
+- ✅ **Flexible deployments** — Deploy services independently
+- ✅ **Future scalability** — Easy to add new deployment targets
+
+### Design Principles
+
+1. **Separation of Concerns** — Each orchestrator has a single responsibility
+2. **Target-Based** — Deploy any service independently
+3. **SSM-Focused** — Secure remote execution without SSH
+4. **Terraform-Wrapped** — Never use raw Terraform CLI directly
+5. **Composable** — Orchestrators work independently
+
+### Important Notes
+
+- This README is intentionally branch-specific for `refactor/python-orchestrator-v2`
+- Use `cloud-soc` as the primary entrypoint
+- Avoid direct Terraform CLI use unless you understand the orchestration model
+- Existing AWS resources are imported into state automatically when possible
+- All deployment operations use custom YAML (no Ansible required)
 
 ## 📌 Summary
 
-This branch is the Python-first orchestration path for Cloud SOC. The core workflow is:
+This branch is the **Python-first, two-stage orchestration** path for Cloud SOC.
 
-- `cloud-soc apply` → provision infrastructure and execute deployments
-- `cloud-soc status` → inspect deployed AWS resources
-- `cloud-soc dashboard` → access Wazuh via SSM
-- `cloud-soc destroy` → clean up infrastructure
+### Core Workflow
 
-For branch-specific documentation, use `docs/README.md`.
+```bash
+cloud-soc apply      # → Infrastructure provisioning (Terraform)
+cloud-soc deploy     # → Service configuration (SSM + YAML)
+cloud-soc dashboard  # → Dashboard access (SSM tunnel)
+cloud-soc destroy    # → Infrastructure cleanup
+```
+
+### Key Advantages
+
+- **Monolithic → Modular**: Three focused orchestrator classes
+- **Unclear states → Clear states**: Infrastructure vs deployment failures are distinct
+- **All-or-nothing → Flexible**: Deploy individual services independently
+- **Hard to debug → Easy to debug**: Isolated failure points
+- **Hard to scale → Easy to scale**: Add new targets without code changes
+
+For comprehensive documentation, start with [QUICKSTART.md](QUICKSTART.md) or [docs/README.md](docs/README.md).
