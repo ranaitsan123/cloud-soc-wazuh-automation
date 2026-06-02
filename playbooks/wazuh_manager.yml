@@ -14,9 +14,12 @@ tasks:
       - curl
       - software-properties-common
       - git
-      - awscli
       - python3
       - python3-pip
+
+  - name: Install boto3 and AWS CLI Python modules
+    type: shell
+    cmd: sudo python3 -m pip install --upgrade awscli boto3
 
   - name: Install Docker GPG key
     type: shell
@@ -38,10 +41,6 @@ tasks:
       - docker-ce-cli
       - containerd.io
       - docker-compose-plugin
-
-  - name: Install boto3 Python module
-    type: shell
-    cmd: sudo pip3 install boto3
 
   - name: Create Wazuh directories
     type: directory

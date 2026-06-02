@@ -62,7 +62,11 @@ class DeploymentTask:
             if isinstance(packages, str):
                 packages = [packages]
             packages = [self._substitute_vars(str(pkg), variables) for pkg in packages or []]
-            install_cmd = "sudo apt-get update -y && sudo apt-get install -y"
+            install_cmd = (
+                "sudo DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none "
+                "apt-get update && sudo DEBIAN_FRONTEND=noninteractive "
+                "APT_LISTCHANGES_FRONTEND=none apt-get install -y"
+            )
             if packages:
                 install_cmd += " " + " ".join(packages)
             return [install_cmd]
@@ -83,7 +87,7 @@ class DeploymentTask:
             source = self._substitute_vars(str(self.config.get("source", "")), variables)
             dest = self._substitute_vars(str(self.config.get("dest", "")), variables)
             if source.startswith("s3://"):
-                return [f"aws s3 cp {source} {dest}"]
+                return [f"python3 -m awscli s3 cp {source} {dest}"]
             return [f"curl -fsSL -o {dest} {source}"]
         if self.task_type == "file":
             action = self.config.get("action", "create")
@@ -354,6 +358,7 @@ class DeploymentPlan:
         self.name = config.get("name", "deployment")
         self.description = config.get("description", "")
         self.tasks = self._parse_tasks(config.get("tasks", []))
+        self.error_message: str = ""
 
     def _parse_tasks(self, tasks_list: List[Dict[str, Any]]) -> List[DeploymentTask]:
         """Parse task definitions from YAML."""
@@ -374,7 +379,8 @@ class DeploymentPlan:
 
         for task in self.tasks:
             if not task.execute(variables):
-                logger.error(f"Deployment failed at task: {task.name}")
+                self.error_message = f"Deployment failed at task: {task.name}"
+                logger.error(self.error_message)
                 return False
 
         logger.info(f"✓ Deployment completed: {self.name}")
@@ -418,13 +424,17 @@ class DeploymentPlan:
         for instance_id in instance_ids:
             invocation = ssm_service.wait_for_command(command_id, instance_id, timeout=3600, poll_interval=10)
             if not invocation:
-                logger.error(f"SSM remote deployment did not complete for {instance_id}")
+                self.error_message = f"SSM remote deployment did not complete for {instance_id}"
+                logger.error(self.error_message)
                 return False
             if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
-                logger.error(
-                    f"SSM remote deployment failed on {instance_id}: status={invocation.get('status')} return_code={invocation.get('return_code')}"
+                output = invocation.get("output", "")
+                error_text = invocation.get("error", "")
+                self.error_message = (
+                    f"SSM remote deployment failed on {instance_id}: status={invocation.get('status')} "
+                    f"return_code={invocation.get('return_code')}\n{error_text}\n{output}"
                 )
-                logger.error(invocation.get("error", ""))
+                logger.error(self.error_message)
                 return False
 
         logger.info(f"✓ Remote deployment completed: {self.name}")
@@ -443,6 +453,7 @@ class DeploymentService:
         """
         self.deployment_dir = Path(deployment_dir)
         self.logger = logger
+        self.last_error: str = ""
 
     def run_deployment(
         self,
@@ -466,7 +477,8 @@ class DeploymentService:
         deployment_path = self.deployment_dir / f"{deployment_name}.yml"
 
         if not deployment_path.exists():
-            self.logger.error(f"Deployment file not found: {deployment_path}")
+            self.last_error = f"Deployment file not found: {deployment_path}"
+            self.logger.error(self.last_error)
             return False
 
         try:
@@ -474,16 +486,22 @@ class DeploymentService:
                 config = yaml.safe_load(f)
 
             if not config:
-                self.logger.error(f"Empty deployment file: {deployment_path}")
+                self.last_error = f"Empty deployment file: {deployment_path}"
+                self.logger.error(self.last_error)
                 return False
 
             plan = DeploymentPlan(config)
-            return plan.execute(
+            success = plan.execute(
                 variables=variables or {},
                 ssm_service=ssm_service,
                 instance_ids=instance_ids,
             )
 
+            if not success:
+                self.last_error = plan.error_message or f"Deployment failed for {deployment_name}"
+            return success
+
         except Exception as e:
-            self.logger.error(f"Failed to load deployment: {e}")
+            self.last_error = f"Failed to load deployment: {e}"
+            self.logger.error(self.last_error)
             return False

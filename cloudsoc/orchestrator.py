@@ -216,7 +216,10 @@ class DeploymentOrchestrator:
                 ssm_service=self.ssm_service,
                 instance_ids=[instance_id],
             ):
-                raise OrchestrationError(f"Deployment to {deployment_name} failed")
+                error_detail = self.deployment_service.last_error or "See logs for details."
+                raise OrchestrationError(
+                    f"Deployment to {deployment_name} failed: {error_detail}"
+                )
 
     def validate_deployment(self, terraform_outputs: Dict) -> None:
         """Validate that deployment is healthy.

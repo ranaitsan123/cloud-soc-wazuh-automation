@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 import yaml
+from botocore.exceptions import ClientError
 
 from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
@@ -21,6 +22,39 @@ def test_ssm_wait_for_instance_online():
         ssm = SSMService(region="eu-north-1")
         assert ssm.wait_for_instance("i-123", timeout=1, poll_interval=0.01)
         mock_client.describe_instance_information.assert_called()
+
+
+def test_ssm_wait_for_command_handles_pending_invocation(tmp_path):
+    with patch("cloudsoc.aws.ssm.boto3.Session") as mock_session:
+        mock_client = Mock()
+        responses = [
+            ClientError(
+                {"Error": {"Code": "InvocationDoesNotExist", "Message": "Invocation does not exist."}},
+                "GetCommandInvocation"
+            ),
+            {
+                "Status": "Success",
+                "StandardOutputContent": "ok",
+                "StandardErrorContent": "",
+                "ResponseCode": 0
+            }
+        ]
+
+        def get_command_invocation_side_effect(**kwargs):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        mock_client.get_command_invocation.side_effect = get_command_invocation_side_effect
+        mock_session.return_value.client.return_value = mock_client
+
+        ssm = SSMService(region="eu-north-1")
+        invocation = ssm.wait_for_command("cmd-123", "i-123", timeout=1, poll_interval=0.01)
+
+        assert invocation is not None
+        assert invocation["status"] == "Success"
+        assert invocation["return_code"] == 0
 
 
 def test_deployment_service_missing_file(tmp_path):
@@ -65,6 +99,47 @@ def test_deployment_service_remote_execution(tmp_path):
 
     assert result is True
     mock_ssm.send_command.assert_called_once()
+
+
+def test_deployment_service_reports_remote_failure_details(tmp_path):
+    deployment_dir = tmp_path / "deployments"
+    deployment_dir.mkdir()
+
+    deployment_yaml = {
+        "name": "test_remote_failure",
+        "description": "Test remote deployment failure",
+        "tasks": [
+            {
+                "name": "Failing task",
+                "type": "shell",
+                "cmd": "exit 1"
+            }
+        ]
+    }
+
+    deployment_file = deployment_dir / "test_remote_failure.yml"
+    with open(deployment_file, "w") as f:
+        yaml.dump(deployment_yaml, f)
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.return_value = "command-456"
+    mock_ssm.wait_for_command.return_value = {
+        "status": "Failed",
+        "return_code": 1,
+        "output": "",
+        "error": "Command failed"
+    }
+
+    deployment_service = DeploymentService(deployment_dir=deployment_dir)
+    result = deployment_service.run_deployment(
+        "test_remote_failure",
+        variables={},
+        ssm_service=mock_ssm,
+        instance_ids=["i-123"]
+    )
+
+    assert result is False
+    assert "status=Failed" in deployment_service.last_error
 
 
 def test_deployment_service_runs_tasks(tmp_path):

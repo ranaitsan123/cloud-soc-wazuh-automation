@@ -93,6 +93,18 @@ class SSMService:
             }
 
         except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code == "InvocationDoesNotExist":
+                self.logger.debug(
+                    f"SSM invocation not yet available for command {command_id} on instance {instance_id}."
+                )
+                return {
+                    "status": "Pending",
+                    "output": "",
+                    "error": "",
+                    "return_code": -1
+                }
+
             self.logger.error(f"Failed to get command invocation: {e}")
             return None
 
@@ -126,8 +138,12 @@ class SSMService:
             status = invocation.get("status")
             if status in ["Success", "Failed", "Cancelled", "TimedOut"]:
                 return invocation
+            if status in ["Pending", "InProgress", "Delayed"]:
+                self.logger.info(f"Waiting for SSM command {command_id} to complete...")
+                time.sleep(poll_interval)
+                continue
 
-            self.logger.info(f"Waiting for SSM command {command_id} to complete...")
+            self.logger.debug(f"Received unexpected SSM status '{status}' for command {command_id}")
             time.sleep(poll_interval)
 
         self.logger.warning(f"SSM command {command_id} did not complete within {timeout} seconds")
