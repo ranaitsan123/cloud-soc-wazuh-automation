@@ -271,10 +271,13 @@ python -m py_compile cloudsoc/terraform/imports.py
 python -c "from cloudsoc.terraform.imports import ResourceImporter; print('✓')"
 
 # Test orchestrator integration
-python -c "from cloudsoc.orchestrator import DeploymentOrchestrator; print('✓')"
+python -c "from cloudsoc.orchestrator import TerraformOrchestrator, DeploymentOrchestrator, DashboardOrchestrator; print('✓')"
 
-# Run deployment (with existing resources)
+# Run infrastructure deployment (Terraform only)
 cloud-soc apply --auto-approve
+
+# Deploy services to instances
+cloud-soc deploy
 ```
 
 ## Known Limitations

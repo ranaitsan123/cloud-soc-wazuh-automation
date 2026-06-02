@@ -1,7 +1,12 @@
-"""Deployment orchestration, inventory generation, and dashboard helpers."""
+"""Orchestration for infrastructure, deployment, and dashboard operations.
+
+Provides separation of concerns:
+- TerraformOrchestrator: Manages Terraform lifecycle (init, validate, plan, apply, destroy)
+- DeploymentOrchestrator: Manages SSM, deployment execution, and validation
+- DashboardOrchestrator: Manages dashboard tunneling and access
+"""
 
 import json
-import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -24,10 +29,15 @@ class OrchestrationError(Exception):
     """Raised when orchestration fails."""
 
 
-class DeploymentOrchestrator:
-    """Coordinates Terraform, AWS, SSM, and YAML deployment execution."""
+class TerraformOrchestrator:
+    """Manages Terraform infrastructure lifecycle operations."""
 
     def __init__(self, settings: Optional[Settings] = None):
+        """Initialize Terraform orchestrator with configuration.
+
+        Args:
+            settings: Optional Settings object. Uses get_settings() if not provided.
+        """
         self.settings = settings or get_settings()
         backend_config = {
             "bucket": self.settings.project.terraform.backend_bucket,
@@ -42,27 +52,12 @@ class DeploymentOrchestrator:
             auto_approve=self.settings.project.terraform.auto_approve,
             backend_config=backend_config,
         )
-        self.iam_service = IAMService(profile=self.settings.project.aws.profile)
-        self.ssm_service = SSMService(
-            region=self.settings.project.aws.region,
-            profile=self.settings.project.aws.profile
-        )
-        self.deployment_service = DeploymentService(deployment_dir=Path("deployment"))
 
-    def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
-        """Apply infrastructure and perform post-apply orchestration."""
+    def init(self) -> None:
+        """Initialize Terraform configuration."""
         self.tf_runner.init()
-        self._import_all_existing_resources()
-        self.tf_runner.validate()
-        plan_file = self.tf_runner.plan(var_files=var_files or [])
-        self.tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
 
-        self._wait_for_ssm_ready()
-        self._run_playbooks()
-        self._validate_deployment()
-        self._print_dashboard_instructions()
-
-    def _import_all_existing_resources(self) -> None:
+    def import_all_existing_resources(self) -> None:
         """Import all existing AWS resources into Terraform state to prevent recreation."""
         try:
             importer = ResourceImporter(
@@ -75,9 +70,200 @@ class DeploymentOrchestrator:
             logger.warning(f"Resource import encountered an issue (non-critical): {e}")
             logger.info("Proceeding with deployment - Terraform will handle creation of missing resources")
 
-    def open_dashboard(self, local_port: int = 8443, remote_port: int = 443) -> None:
-        """Open an SSM port-forwarding tunnel to the Wazuh dashboard."""
-        instance_id = self._get_wazuh_instance_id()
+    def validate(self) -> None:
+        """Validate Terraform configuration."""
+        self.tf_runner.validate()
+
+    def plan(self, var_files: Optional[List[str]] = None) -> str:
+        """Plan infrastructure changes.
+
+        Args:
+            var_files: Optional list of Terraform variable file paths.
+
+        Returns:
+            Path to the generated plan file.
+        """
+        return self.tf_runner.plan(var_files=var_files or [])
+
+    def apply(self, plan_file: str, auto_approve: bool = False) -> None:
+        """Apply infrastructure changes.
+
+        Args:
+            plan_file: Path to the Terraform plan file.
+            auto_approve: Whether to skip approval prompt.
+        """
+        self.tf_runner.apply(plan_file=plan_file, auto_approve=auto_approve)
+
+    def destroy(self, auto_approve: bool = False) -> None:
+        """Destroy infrastructure.
+
+        Args:
+            auto_approve: Whether to skip approval prompt.
+        """
+        self.tf_runner.destroy(auto_approve=auto_approve)
+
+    def output(self) -> Dict:
+        """Get Terraform outputs.
+
+        Returns:
+            Dictionary of Terraform outputs.
+        """
+        return self.tf_runner.output()
+
+
+class DeploymentOrchestrator:
+    """Manages deployment operations including SSM, playbooks, and validation.
+
+    This orchestrator handles:
+    - Waiting for SSM agent readiness
+    - Running deployment playbooks
+    - Validating deployment completion
+    - Managing target-based deployments
+    """
+
+    def __init__(self, settings: Optional[Settings] = None):
+        """Initialize deployment orchestrator.
+
+        Args:
+            settings: Optional Settings object. Uses get_settings() if not provided.
+        """
+        self.settings = settings or get_settings()
+        self.ssm_service = SSMService(
+            region=self.settings.project.aws.region,
+            profile=self.settings.project.aws.profile
+        )
+        self.deployment_service = DeploymentService(deployment_dir=Path("deployment"))
+
+    def wait_for_ssm_ready(self, instance_ids: List[str], timeout: int = 600, poll_interval: int = 15) -> None:
+        """Wait for SSM agent to be ready on instances.
+
+        Args:
+            instance_ids: List of EC2 instance IDs to wait for.
+            timeout: Maximum time to wait in seconds.
+            poll_interval: Interval between status checks in seconds.
+
+        Raises:
+            OrchestrationError: If SSM agent does not become ready.
+        """
+        if not instance_ids:
+            raise OrchestrationError("No EC2 instances provided for SSM readiness check")
+
+        for instance_id in instance_ids:
+            if not self.ssm_service.wait_for_instance(instance_id, timeout=timeout, poll_interval=poll_interval):
+                raise OrchestrationError(f"SSM agent did not become ready for instance {instance_id}")
+
+    def deploy_targets(
+        self,
+        terraform_outputs: Dict,
+        targets: Optional[List[str]] = None,
+        skip_validation: bool = False
+    ) -> None:
+        """Deploy to specified targets using Terraform outputs.
+
+        Args:
+            terraform_outputs: Dictionary of Terraform outputs.
+            targets: List of deployment targets. If None or empty, deploys to all configured targets.
+                    Supported: 'wazuh', 'victim', or any deployment in deployment/ directory.
+            skip_validation: Whether to skip deployment validation.
+
+        Raises:
+            OrchestrationError: If deployment fails.
+        """
+        # Default to all configured targets if none specified
+        if not targets:
+            targets = ["wazuh_manager", "victim_server"]
+
+        # Map user-friendly names to deployment names
+        target_mapping = {
+            "wazuh": "wazuh_manager",
+            "victim": "victim_server",
+            "wazuh_manager": "wazuh_manager",
+            "victim_server": "victim_server",
+        }
+
+        # Get instance IDs from outputs
+        instance_ids_map = {
+            "wazuh_manager": terraform_outputs.get("wazuh_instance_id", {}).get("value"),
+            "victim_server": terraform_outputs.get("victim_instance_id", {}).get("value"),
+        }
+
+        for target in targets:
+            deployment_name = target_mapping.get(target, target)
+            instance_id = instance_ids_map.get(deployment_name)
+
+            if not instance_id:
+                raise OrchestrationError(f"Missing instance ID for deployment target: {deployment_name}")
+
+            # Prepare deployment-specific variables
+            if deployment_name == "wazuh_manager":
+                variables = {
+                    "s3_bucket_name": terraform_outputs.get("s3_bucket_name", {}).get("value", ""),
+                    "s3_prefix": terraform_outputs.get("s3_prefix", {}).get("value", "wazuh-docker"),
+                }
+            elif deployment_name == "victim_server":
+                variables = {
+                    "wazuh_manager_ip": terraform_outputs.get("wazuh_instance_private_ip", {}).get("value", "127.0.0.1"),
+                    "aws_region": self.settings.project.aws.region,
+                    "ecr_victim_repository_url": terraform_outputs.get("ecr_victim_repository_url", {}).get("value", ""),
+                }
+            else:
+                # For future deployments, pass all outputs as variables
+                variables = terraform_outputs
+
+            if not self.deployment_service.run_deployment(
+                deployment_name,
+                variables=variables,
+                ssm_service=self.ssm_service,
+                instance_ids=[instance_id],
+            ):
+                raise OrchestrationError(f"Deployment to {deployment_name} failed")
+
+    def validate_deployment(self, terraform_outputs: Dict) -> None:
+        """Validate that deployment is healthy.
+
+        Args:
+            terraform_outputs: Dictionary of Terraform outputs.
+
+        Raises:
+            OrchestrationError: If validation fails.
+        """
+        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
+        if not wazuh_id:
+            raise OrchestrationError("Unable to validate deployment without Wazuh instance ID")
+
+        if not self.ssm_service.wait_for_instance(wazuh_id, timeout=120, poll_interval=10):
+            raise OrchestrationError("Deployment validation failed: Wazuh instance is not available via SSM")
+
+        console.print(Panel("[bold green]✓ Deployment validated successfully[/bold green]", expand=False))
+
+
+class DashboardOrchestrator:
+    """Manages Wazuh dashboard access via SSM port forwarding."""
+
+    def __init__(self, settings: Optional[Settings] = None):
+        """Initialize dashboard orchestrator.
+
+        Args:
+            settings: Optional Settings object. Uses get_settings() if not provided.
+        """
+        self.settings = settings or get_settings()
+        self.ssm_service = SSMService(
+            region=self.settings.project.aws.region,
+            profile=self.settings.project.aws.profile
+        )
+
+    def open_tunnel(self, terraform_outputs: Dict, local_port: int = 8443, remote_port: int = 443) -> None:
+        """Open an SSM port-forwarding tunnel to the Wazuh dashboard.
+
+        Args:
+            terraform_outputs: Dictionary of Terraform outputs.
+            local_port: Local port for port forwarding.
+            remote_port: Remote dashboard port on the Wazuh instance.
+
+        Raises:
+            OrchestrationError: If tunnel cannot be opened.
+        """
+        instance_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
         if not instance_id:
             raise OrchestrationError("Wazuh instance ID could not be determined for dashboard access")
 
@@ -122,78 +308,6 @@ class DeploymentOrchestrator:
         except ShellCommandError as e:
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
 
-    def _wait_for_ssm_ready(self) -> None:
-        instance_ids = self._get_instance_ids()
-        if not instance_ids:
-            raise OrchestrationError("No EC2 instances found to wait for SSM readiness")
-
-        for instance_id in instance_ids:
-            if not self.ssm_service.wait_for_instance(instance_id, timeout=600, poll_interval=15):
-                raise OrchestrationError(f"SSM agent did not become ready for instance {instance_id}")
-
-    def _run_playbooks(self) -> None:
-        outputs = self.tf_runner.output()
-        wazuh_instance_id = outputs.get("wazuh_instance_id", {}).get("value")
-        victim_instance_id = outputs.get("victim_instance_id", {}).get("value")
-
-        if not wazuh_instance_id or not victim_instance_id:
-            raise OrchestrationError("Missing instance IDs for remote deployment")
-
-        extra_vars_manager = {
-            "s3_bucket_name": outputs.get("s3_bucket_name", {}).get("value", ""),
-            "s3_prefix": outputs.get("s3_prefix", {}).get("value", "wazuh-docker")
-        }
-        extra_vars_victim = {
-            "wazuh_manager_ip": outputs.get("wazuh_instance_private_ip", {}).get("value", "127.0.0.1"),
-            "aws_region": self.settings.project.aws.region,
-            "ecr_victim_repository_url": outputs.get("ecr_victim_repository_url", {}).get("value", "")
-        }
-
-        if not self.deployment_service.run_deployment(
-            "wazuh_manager",
-            variables=extra_vars_manager,
-            ssm_service=self.ssm_service,
-            instance_ids=[wazuh_instance_id],
-        ):
-            raise OrchestrationError("Wazuh manager deployment failed")
-
-        if not self.deployment_service.run_deployment(
-            "victim_server",
-            variables=extra_vars_victim,
-            ssm_service=self.ssm_service,
-            instance_ids=[victim_instance_id],
-        ):
-            raise OrchestrationError("Victim server deployment failed")
-
-    def _validate_deployment(self) -> None:
-        wazuh_id = self._get_wazuh_instance_id()
-        if not wazuh_id:
-            raise OrchestrationError("Unable to validate deployment without Wazuh instance ID")
-
-        if not self.ssm_service.wait_for_instance(wazuh_id, timeout=120, poll_interval=10):
-            raise OrchestrationError("Deployment validation failed: Wazuh instance is not available via SSM")
-
-        console.print(Panel("[bold green]✓ Deployment validated successfully[/bold green]", expand=False))
-
-    def _print_dashboard_instructions(self) -> None:
-        console.print(
-            Panel(
-                "[bold green]Deployment complete![/bold green]\n\n"
-                "Next step: run [bold]cloud-soc dashboard[/bold] to open a local tunnel to the Wazuh dashboard.\n"
-                "Then open [bold]https://127.0.0.1:8443[/bold] in your browser.",
-                title="Cloud SOC",
-                expand=False,
-            )
-        )
-
-    def _get_instance_ids(self) -> List[str]:
-        outputs = self.tf_runner.output()
-        ids = [
-            outputs.get("wazuh_instance_id", {}).get("value"),
-            outputs.get("victim_instance_id", {}).get("value"),
-        ]
-        return [instance_id for instance_id in ids if instance_id]
-
     def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> bool:
         """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
         command = [
@@ -223,7 +337,3 @@ class DeploymentOrchestrator:
             return False
 
         return invocation.get("output", "") == "200"
-
-    def _get_wazuh_instance_id(self) -> Optional[str]:
-        outputs = self.tf_runner.output()
-        return outputs.get("wazuh_instance_id", {}).get("value")

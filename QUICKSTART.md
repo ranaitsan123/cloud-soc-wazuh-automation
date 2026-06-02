@@ -17,18 +17,9 @@ cloud-soc status
 
 ## Common Commands
 
-### Check Infrastructure Status
-```bash
-cloud-soc status
-```
+### Infrastructure Lifecycle Commands
 
-Output shows:
-- VPC details (ID, CIDR, state)
-- Available subnets with availability zones
-- Running EC2 instances with IPs
-- Security groups in the VPC
-
-### Apply Infrastructure
+#### 1. Apply Infrastructure (Terraform only)
 ```bash
 # With approval prompt
 cloud-soc apply
@@ -40,16 +31,51 @@ cloud-soc apply --auto-approve
 cloud-soc apply --var-file prod.tfvars
 ```
 
-### Destroy Infrastructure
-```bash
-# With confirmation (safe)
-cloud-soc destroy
+**What happens:**
+- Terraform initializes, validates, and applies
+- AWS resources are created (VPC, EC2, IAM, etc.)
+- **Does NOT** deploy services or wait for instances
 
-# With automatic approval
-cloud-soc destroy --auto-approve --force
+**Next step:** Run `cloud-soc deploy`
+
+#### 2. Deploy Services (SSM + Deployment only)
+```bash
+# Deploy all services (Wazuh + Victim)
+cloud-soc deploy
+
+# Deploy only Wazuh manager
+cloud-soc deploy wazuh
+
+# Deploy only victim server
+cloud-soc deploy victim
+
+# Deploy multiple targets
+cloud-soc deploy wazuh victim
+
+# Skip validation checks
+cloud-soc deploy --skip-validation
 ```
 
-### Open the Wazuh Dashboard
+**What happens:**
+- Waits for SSM agent readiness on instances
+- Runs deployment playbooks for specified targets
+- Validates deployment completion
+- **Requires:** Infrastructure already deployed (`cloud-soc apply`)
+
+**Next step:** Run `cloud-soc dashboard`
+
+#### 3. Check Infrastructure Status
+```bash
+cloud-soc status
+```
+
+Output shows:
+- VPC details (ID, CIDR, state)
+- Available subnets with availability zones
+- Running EC2 instances with IPs
+- Security groups in the VPC
+
+#### 4. Open the Wazuh Dashboard
 ```bash
 cloud-soc dashboard
 ```
@@ -59,10 +85,53 @@ Then open:
 https://127.0.0.1:8443
 ```
 
-### Validate Configuration
+Credentials are available in the Wazuh dashboard UI.
+
+#### 5. Destroy Infrastructure
+```bash
+# With confirmation (safe)
+cloud-soc destroy
+
+# With automatic approval
+cloud-soc destroy --auto-approve --force
+```
+
+#### 6. Validate Configuration
 ```bash
 cloud-soc validate
 ```
+
+## Typical Workflow
+
+```bash
+# Step 1: Deploy infrastructure (Terraform)
+cloud-soc apply --auto-approve
+
+# Step 2: Wait a few seconds for instances to boot
+sleep 10
+
+# Step 3: Deploy services (SSM + playbooks)
+cloud-soc deploy
+
+# Step 4: Access dashboard
+cloud-soc dashboard
+# Open https://127.0.0.1:8443 in browser
+
+# Step 5: When done, destroy
+cloud-soc destroy --auto-approve --force
+```
+
+## Why Two Commands?
+
+The new `apply` and `deploy` split provides several benefits:
+
+- **Clear failure attribution**: Know if infrastructure or deployment failed
+- **Independent operations**: Retry failed stages without reprovisioning
+- **Better diagnostics**: Each stage has clear output
+- **Flexible deployments**: Deploy individual services as needed
+- **Future scalability**: Easy to add new deployment targets (e.g., grafana, elasticsearch)
+
+See [Orchestrator Architecture Guide](docs/3-reference/orchestrator-architecture.md) for details.
 
 ## Python API Usage
 
@@ -90,7 +159,64 @@ for instance in instances:
     print(f"  Instance: {instance.id} ({instance.state})")
 ```
 
-#### 2. Apply Infrastructure
+#### 2. Use TerraformOrchestrator
+
+```python
+from cloudsoc.orchestrator import TerraformOrchestrator
+
+tf_orchestrator = TerraformOrchestrator()
+tf_orchestrator.init()
+tf_orchestrator.validate()
+tf_orchestrator.plan()
+tf_orchestrator.apply(plan_file="plan.tfplan", auto_approve=True)
+
+# Get outputs for deployment
+outputs = tf_orchestrator.output()
+print(f"Wazuh Instance: {outputs['wazuh_instance_id']}")
+```
+
+#### 3. Use DeploymentOrchestrator
+
+```python
+from cloudsoc.orchestrator import DeploymentOrchestrator, TerraformOrchestrator
+
+tf_orchestrator = TerraformOrchestrator()
+terraform_outputs = tf_orchestrator.output()
+
+deployment_orchestrator = DeploymentOrchestrator()
+
+# Wait for instances
+wazuh_id = terraform_outputs["wazuh_instance_id"]["value"]
+victim_id = terraform_outputs["victim_instance_id"]["value"]
+deployment_orchestrator.wait_for_ssm_ready([wazuh_id, victim_id])
+
+# Deploy specific targets
+deployment_orchestrator.deploy_targets(
+    terraform_outputs,
+    targets=["wazuh"],  # Deploy only Wazuh
+)
+
+# Validate
+deployment_orchestrator.validate_deployment(terraform_outputs)
+```
+
+#### 4. Use DashboardOrchestrator
+
+```python
+from cloudsoc.orchestrator import DashboardOrchestrator, TerraformOrchestrator
+
+tf_orchestrator = TerraformOrchestrator()
+terraform_outputs = tf_orchestrator.output()
+
+dashboard_orchestrator = DashboardOrchestrator()
+dashboard_orchestrator.open_tunnel(
+    terraform_outputs,
+    local_port=8443,
+    remote_port=443
+)
+```
+
+#### 5. Apply Infrastructure
 
 ```python
 from cloudsoc.terraform.runner import TerraformRunner
@@ -108,7 +234,7 @@ runner.plan()
 runner.apply()
 ```
 
-#### 3. Clean Up Resources
+#### 6. Clean Up Resources
 
 ```python
 from cloudsoc.cleanup.services import NetworkCleanupService, VPCCleanupService
@@ -127,7 +253,7 @@ vpc_cleanup = VPCCleanupService()
 vpc_cleanup.cleanup_vpc_instances(vpc_id=vpc.id)
 ```
 
-#### 4. Run Custom YAML Deployment
+#### 7. Run Custom YAML Deployment
 
 ```python
 from cloudsoc.deployment.executor import DeploymentService
@@ -144,7 +270,7 @@ success = deployment.run_deployment(
 )
 ```
 
-#### 5. Manage SSM Parameters
+#### 8. Manage SSM Parameters
 
 ```python
 from cloudsoc.aws.ssm import SSMService
@@ -170,7 +296,7 @@ cmd_id = ssm.send_command(
 )
 ```
 
-#### 6. ECR Repository Management
+#### 9. ECR Repository Management
 
 ```python
 from cloudsoc.aws.ecr import ECRService
@@ -189,7 +315,7 @@ repo = ecr.create_repository(
 )
 ```
 
-#### 7. S3 Bucket Operations
+#### 10. S3 Bucket Operations
 
 ```python
 from cloudsoc.aws.s3 import S3Service

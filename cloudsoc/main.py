@@ -10,7 +10,12 @@ from rich.table import Table
 from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
-from cloudsoc.orchestrator import DeploymentOrchestrator, OrchestrationError
+from cloudsoc.orchestrator import (
+    TerraformOrchestrator,
+    DeploymentOrchestrator,
+    DashboardOrchestrator,
+    OrchestrationError,
+)
 from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
@@ -45,7 +50,18 @@ def apply(
         help="Path to Terraform variable file (can be used multiple times)"
     ),
 ) -> None:
-    """Apply infrastructure changes using Terraform"""
+    """Apply infrastructure changes (Terraform only).
+
+    This command handles Terraform operations:
+    - init: Initialize Terraform
+    - import: Import existing resources
+    - validate: Validate configuration
+    - plan: Plan changes
+    - apply: Apply infrastructure
+
+    Does NOT wait for instances or run deployments.
+    Use 'deploy' command after this to configure services.
+    """
     settings = get_settings()
 
     console.print(
@@ -56,12 +72,123 @@ def apply(
     )
 
     try:
-        orchestrator = DeploymentOrchestrator()
-        logger.info("Starting deployment orchestration...")
+        tf_orchestrator = TerraformOrchestrator()
+        logger.info("Starting Terraform infrastructure deployment...")
+
+        tf_orchestrator.init()
+        logger.info("[INIT] Terraform initialized")
+
+        tf_orchestrator.import_all_existing_resources()
+        logger.info("[IMPORT] Resources imported")
+
+        tf_orchestrator.validate()
+        logger.info("[VALIDATE] Configuration valid")
+
         var_file_list = [var_files] if var_files else []
-        orchestrator.apply(auto_approve=auto_approve, var_files=var_file_list)
+        plan_file = tf_orchestrator.plan(var_files=var_file_list)
+        logger.info("[PLAN] Infrastructure plan generated")
+
+        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
+        logger.info("[APPLY] Infrastructure deployed successfully")
+
+        console.print(
+            Panel(
+                "[bold green]✓ Infrastructure provisioning complete![/bold green]\n\n"
+                "Next step: run [bold]cloud-soc deploy[/bold] to deploy services.\n"
+                "Or run [bold]cloud-soc status[/bold] to check infrastructure status.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
 
     except (TerraformStateError, OrchestrationError) as e:
+        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def deploy(
+    targets: Optional[str] = typer.Argument(
+        None,
+        help="Deployment targets (wazuh, victim, or space-separated list). Defaults to all."
+    ),
+    skip_validation: bool = typer.Option(
+        False,
+        "--skip-validation",
+        help="Skip deployment validation"
+    ),
+) -> None:
+    """Deploy services to instances (SSM + Deployments).
+
+    This command handles service deployment:
+    - Waits for SSM agent readiness on instances
+    - Runs deployment playbooks for specified targets
+    - Validates deployment completion
+
+    Targets can be:
+    - 'wazuh' or 'wazuh_manager': Deploy Wazuh manager
+    - 'victim' or 'victim_server': Deploy victim server
+    - Multiple targets: 'wazuh victim' (space-separated)
+    - Omit or empty for all targets
+
+    Requires infrastructure to be deployed first.
+    """
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Service Deployment[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        tf_orchestrator = TerraformOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found. Run 'cloud-soc apply' first."
+            )
+
+        deployment_orchestrator = DeploymentOrchestrator()
+
+        # Parse targets
+        target_list = None
+        if targets:
+            target_list = targets.split()
+
+        logger.info("Waiting for SSM agent readiness...")
+        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
+        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
+        instance_ids = [id for id in [wazuh_id, victim_id] if id]
+
+        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
+        logger.info("[SSM] All instances connected")
+
+        logger.info("Starting service deployments...")
+        deployment_orchestrator.deploy_targets(
+            terraform_outputs,
+            targets=target_list,
+            skip_validation=skip_validation
+        )
+
+        if not skip_validation:
+            logger.info("Validating deployment...")
+            deployment_orchestrator.validate_deployment(terraform_outputs)
+
+        console.print(
+            Panel(
+                "[bold green]✓ Service deployment complete![/bold green]\n\n"
+                "Next step: run [bold]cloud-soc dashboard[/bold] to access the Wazuh dashboard.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
+
+    except OrchestrationError as e:
         console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
         raise typer.Exit(code=1)
     except Exception as e:
@@ -92,8 +219,20 @@ def dashboard(
     )
 
     try:
-        orchestrator = DeploymentOrchestrator()
-        orchestrator.open_dashboard(local_port=local_port, remote_port=remote_port)
+        tf_orchestrator = TerraformOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found. Run 'cloud-soc apply' first."
+            )
+
+        dashboard_orchestrator = DashboardOrchestrator()
+        dashboard_orchestrator.open_tunnel(
+            terraform_outputs,
+            local_port=local_port,
+            remote_port=remote_port
+        )
     except OrchestrationError as e:
         console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
         raise typer.Exit(code=1)
