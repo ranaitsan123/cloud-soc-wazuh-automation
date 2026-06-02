@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from rich.console import Console
 from rich.panel import Panel
 
-from cloudsoc.deployment.executor import DeploymentService
+from cloudsoc.playbooks.executor import DeploymentService
 from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.config.settings import Settings, get_settings
@@ -132,7 +132,7 @@ class DeploymentOrchestrator:
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
         )
-        self.deployment_service = DeploymentService(deployment_dir=Path("deployment"))
+        self.deployment_service = DeploymentService(deployment_dir=Path("playbooks"))
 
     def wait_for_ssm_ready(self, instance_ids: List[str], timeout: int = 600, poll_interval: int = 15) -> None:
         """Wait for SSM agent to be ready on instances.
@@ -163,7 +163,7 @@ class DeploymentOrchestrator:
         Args:
             terraform_outputs: Dictionary of Terraform outputs.
             targets: List of deployment targets. If None or empty, deploys to all configured targets.
-                    Supported: 'wazuh', 'victim', or any deployment in deployment/ directory.
+                    Supported: 'wazuh', 'victim', or any deployment in playbooks/ directory.
             skip_validation: Whether to skip deployment validation.
 
         Raises:

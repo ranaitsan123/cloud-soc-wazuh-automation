@@ -1,7 +1,7 @@
 """Main CLI entry point using Typer"""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -112,9 +112,9 @@ def apply(
 
 @app.command()
 def deploy(
-    targets: Optional[str] = typer.Argument(
+    targets: Optional[List[str]] = typer.Argument(
         None,
-        help="Deployment targets (wazuh, victim, or space-separated list). Defaults to all."
+        help="Deployment targets (e.g., wazuh victim). Omit to deploy all."
     ),
     skip_validation: bool = typer.Option(
         False,
@@ -122,7 +122,7 @@ def deploy(
         help="Skip deployment validation"
     ),
 ) -> None:
-    """Deploy services to instances (SSM + Deployments).
+    """Deploy services to instances (SSM + Playbooks).
 
     This command handles service deployment:
     - Waits for SSM agent readiness on instances
@@ -132,8 +132,8 @@ def deploy(
     Targets can be:
     - 'wazuh' or 'wazuh_manager': Deploy Wazuh manager
     - 'victim' or 'victim_server': Deploy victim server
-    - Multiple targets: 'wazuh victim' (space-separated)
-    - Omit or empty for all targets
+    - Multiple targets: 'wazuh victim' (separate each target as argument)
+    - Omit all targets to deploy to all
 
     Requires infrastructure to be deployed first.
     """
@@ -155,10 +155,8 @@ def deploy(
 
         deployment_orchestrator = DeploymentOrchestrator()
 
-        # Parse targets
-        target_list = None
-        if targets:
-            target_list = targets.split()
+        # Targets is already a list from Typer
+        target_list = targets
 
         logger.info("Waiting for SSM agent readiness...")
         wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")

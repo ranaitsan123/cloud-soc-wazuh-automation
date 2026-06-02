@@ -434,12 +434,12 @@ class DeploymentPlan:
 class DeploymentService:
     """Service for custom YAML-based deployment execution."""
 
-    def __init__(self, deployment_dir: Path = Path("deployment")):
+    def __init__(self, deployment_dir: Path = Path("playbooks")):
         """
         Initialize deployment service.
 
         Args:
-            deployment_dir: Path to deployment definitions directory
+            deployment_dir: Path to playbook definitions directory
         """
         self.deployment_dir = Path(deployment_dir)
         self.logger = logger
