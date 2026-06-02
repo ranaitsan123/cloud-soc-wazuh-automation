@@ -359,6 +359,7 @@ class DeploymentPlan:
         self.description = config.get("description", "")
         self.tasks = self._parse_tasks(config.get("tasks", []))
         self.error_message: str = ""
+        self.raw_error: str = ""
 
     def _parse_tasks(self, tasks_list: List[Dict[str, Any]]) -> List[DeploymentTask]:
         """Parse task definitions from YAML."""
@@ -425,16 +426,23 @@ class DeploymentPlan:
             invocation = ssm_service.wait_for_command(command_id, instance_id, timeout=3600, poll_interval=10)
             if not invocation:
                 self.error_message = f"SSM remote deployment did not complete for {instance_id}"
+                self.raw_error = "No command invocation was returned by AWS SSM."
                 logger.error(self.error_message)
+                logger.debug(self.raw_error)
                 return False
-            if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
-                output = invocation.get("output", "")
-                error_text = invocation.get("error", "")
+
+            status = invocation.get("status")
+            return_code = invocation.get("return_code")
+            if status != "Success" or return_code != 0:
+                error_text = invocation.get("error", "").strip()
+                output_text = invocation.get("output", "").strip()
                 self.error_message = (
-                    f"SSM remote deployment failed on {instance_id}: status={invocation.get('status')} "
-                    f"return_code={invocation.get('return_code')}\n{error_text}\n{output}"
+                    f"SSM remote deployment failed on {instance_id}: status={status} return_code={return_code}"
                 )
+                self.raw_error = "\n".join(filter(None, [error_text, output_text]))
                 logger.error(self.error_message)
+                if self.raw_error:
+                    logger.debug(self.raw_error)
                 return False
 
         logger.info(f"✓ Remote deployment completed: {self.name}")
@@ -454,6 +462,7 @@ class DeploymentService:
         self.deployment_dir = Path(deployment_dir)
         self.logger = logger
         self.last_error: str = ""
+        self.last_error_detail: str = ""
 
     def run_deployment(
         self,
@@ -499,6 +508,7 @@ class DeploymentService:
 
             if not success:
                 self.last_error = plan.error_message or f"Deployment failed for {deployment_name}"
+                self.last_error_detail = plan.raw_error
             return success
 
         except Exception as e:
