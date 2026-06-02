@@ -7,8 +7,9 @@ Provides separation of concerns:
 """
 
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -273,11 +274,16 @@ class DashboardOrchestrator:
         if not self.ssm_service.wait_for_instance(instance_id, timeout=120, poll_interval=10):
             raise OrchestrationError("SSM agent is not online for the Wazuh instance")
 
-        dashboard_ready = self._monitor_dashboard_service(instance_id, remote_port)
+        dashboard_ready, diagnostics = self._monitor_dashboard_service(instance_id, remote_port)
         if dashboard_ready:
             status_message = "Wazuh dashboard service is responsive on the instance."
         else:
-            status_message = "Warning: Wazuh dashboard service did not respond on the remote instance. The tunnel will still be opened if possible."
+            status_message = (
+                "Warning: Wazuh dashboard service did not respond on the remote instance. "
+                "The tunnel will still be opened if possible."
+            )
+            if diagnostics:
+                status_message += f"\n\nRemote diagnostics:\n{diagnostics}"
 
         command = [
             "aws",
@@ -311,32 +317,81 @@ class DashboardOrchestrator:
         except ShellCommandError as e:
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
 
-    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> bool:
+    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
         """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
-        command = [
-            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port}"
+        health_script = [
+            "set +e",
+            "echo '---curl-status---'",
+            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port} || true",
+            "echo '---opensearch-status---'",
+            "curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:9200 || true",
+            "echo '---docker-ps---'",
+            "docker compose -f /opt/wazuh/docker-compose.yml ps || true",
+            "echo '---dashboard-logs---'",
+            "docker compose -f /opt/wazuh/docker-compose.yml logs --tail 40 wazuh.dashboard || true",
+            "echo '---indexer-logs---'",
+            "docker compose -f /opt/wazuh/docker-compose.yml logs --tail 40 wazuh.indexer || true",
         ]
+
         command_id = self.ssm_service.send_command(
             instance_ids=[instance_id],
-            commands=command,
+            commands=["\n".join(health_script)],
             working_directory="/tmp",
-            timeout=60,
+            timeout=120,
             document_name="AWS-RunShellScript"
         )
 
         if not command_id:
             logger.warning("Unable to send dashboard health check command via SSM")
-            return False
+            return False, "Unable to send SSM dashboard health check command."
 
-        invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=90, poll_interval=5)
+        invocation = self.ssm_service.wait_for_command(command_id, instance_id, timeout=120, poll_interval=5)
         if not invocation:
             logger.warning("Dashboard health check command did not complete")
-            return False
+            return False, "Dashboard health check command did not complete."
 
-        if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
-            logger.warning(
-                f"Dashboard health check failed: status={invocation.get('status')} return_code={invocation.get('return_code')}"
-            )
-            return False
+        status = invocation.get("status")
+        return_code = invocation.get("return_code")
+        output = invocation.get("output", "")
+        error = invocation.get("error", "").strip()
 
-        return invocation.get("output", "") == "200"
+        if status != "Success" or return_code != 0:
+            diagnostics = []
+            if output:
+                diagnostics.append(output.strip())
+            if error:
+                diagnostics.append(error)
+            return False, "\n".join(diagnostics).strip()
+
+        parsed = dict(re.findall(r"^---(?P<name>[a-z-]+)---\s*\n(?P<body>.*?)(?=^---[a-z-]+---\s*$|\Z)", output, flags=re.MULTILINE | re.DOTALL))
+        curl_status = parsed.get("curl-status", "").strip().splitlines()[0] if parsed.get("curl-status") else ""
+        opensearch_status = parsed.get("opensearch-status", "").strip().splitlines()[0] if parsed.get("opensearch-status") else ""
+
+        dashboard_ready = curl_status in {"200", "302", "301"}
+        diagnostics_parts = []
+
+        if not dashboard_ready:
+            diagnostics_parts.append(f"Dashboard returned HTTP status {curl_status or 'unknown'}.")
+
+        if opensearch_status and opensearch_status != "200":
+            diagnostics_parts.append(f"OpenSearch returned HTTP status {opensearch_status}.")
+
+        docker_ps = parsed.get("docker-ps", "").strip()
+        dashboard_logs = parsed.get("dashboard-logs", "").strip()
+        indexer_logs = parsed.get("indexer-logs", "").strip()
+
+        if docker_ps:
+            diagnostics_parts.append(f"docker compose ps:\n{docker_ps}")
+        if dashboard_logs:
+            diagnostics_parts.append(f"dashboard logs:\n{dashboard_logs}")
+        if indexer_logs:
+            diagnostics_parts.append(f"indexer logs:\n{indexer_logs}")
+
+        diagnostics = "\n\n".join(diagnostics_parts).strip()
+
+        if dashboard_ready:
+            if diagnostics:
+                diagnostics = f"Dashboard is responding, but diagnostics show potential issues:\n{diagnostics}"
+            return True, diagnostics
+
+        return False, diagnostics or "Dashboard health check failed and no diagnostics were captured."
