@@ -1,4 +1,4 @@
-"""Custom YAML deployment executor - replaces Ansible playbook execution."""
+"""Deployment service for executing custom YAML playbooks on remote instances via SSM."""
 
 import os
 import re

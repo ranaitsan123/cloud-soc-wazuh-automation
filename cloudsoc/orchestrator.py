@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from rich.console import Console
 from rich.panel import Panel
 
-from cloudsoc.playbooks.executor import DeploymentService
+from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.iam import IAMService
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.config.settings import Settings, get_settings

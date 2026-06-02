@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import yaml
 
-from cloudsoc.playbooks.executor import DeploymentService
+from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
 
 
@@ -92,7 +92,7 @@ def test_deployment_service_runs_tasks(tmp_path):
     
     deployment_service = DeploymentService(deployment_dir=deployment_dir)
     
-    with patch("cloudsoc.playbooks.executor.run_command") as mock_run:
+    with patch("cloudsoc.deployment.executor.run_command") as mock_run:
         mock_run.return_value = None
         result = deployment_service.run_deployment("test_deploy", variables={})
         assert result is True
