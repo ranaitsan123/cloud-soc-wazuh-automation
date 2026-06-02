@@ -312,6 +312,11 @@ Or connect to a different remote port:
 cloud-soc dashboard --remote-port 8443
 ```
 
+Run the tunnel in Codespaces or another environment where local port bindings must be exposed:
+```bash
+cloud-soc dashboard --expose
+```
+
 ## Deployment Workflow Examples
 
 ### Example 1: Full Deployment

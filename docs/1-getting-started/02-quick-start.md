@@ -164,6 +164,9 @@ cloud-soc dashboard --local-port 9443
 
 # Custom remote port (if dashboard on different port)
 cloud-soc dashboard --remote-port 8443
+
+# Bind the local port to all interfaces for Codespaces or remote forwarding
+cloud-soc dashboard --expose
 ```
 
 **Next steps:**

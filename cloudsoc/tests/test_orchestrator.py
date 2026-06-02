@@ -2,11 +2,13 @@
 
 from pathlib import Path
 from unittest.mock import Mock, patch
+import json
 import yaml
 from botocore.exceptions import ClientError
 
 from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
+from cloudsoc.orchestrator import DashboardOrchestrator
 
 
 def test_ssm_wait_for_instance_online():
@@ -171,3 +173,31 @@ def test_deployment_service_runs_tasks(tmp_path):
         mock_run.return_value = None
         result = deployment_service.run_deployment("test_deploy", variables={})
         assert result is True
+
+
+def test_dashboard_open_tunnel_expose_binds_all_interfaces():
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
+         patch("cloudsoc.orchestrator.run_command") as mock_run_command, \
+         patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
+        mock_ssm_service = Mock()
+        mock_ssm_service.wait_for_instance.return_value = True
+        mock_ssm_service_cls.return_value = mock_ssm_service
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        dashboard.open_tunnel(
+            {"wazuh_instance_id": {"value": "i-123"}},
+            local_port=9443,
+            remote_port=443,
+            local_address="0.0.0.0",
+        )
+
+        assert mock_run_command.called
+        command = mock_run_command.call_args[0][0]
+        assert "AWS-StartPortForwardingSessionToRemoteHost" in command
+        params = json.loads(command[-1])
+        assert params["localAddress"] == ["0.0.0.0"]
+        assert params["localPortNumber"] == ["9443"]

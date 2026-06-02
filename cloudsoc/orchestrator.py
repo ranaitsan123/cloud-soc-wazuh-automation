@@ -256,13 +256,20 @@ class DashboardOrchestrator:
             profile=self.settings.project.aws.profile
         )
 
-    def open_tunnel(self, terraform_outputs: Dict, local_port: int = 8443, remote_port: int = 443) -> None:
+    def open_tunnel(
+        self,
+        terraform_outputs: Dict,
+        local_port: int = 8443,
+        remote_port: int = 443,
+        local_address: str = "127.0.0.1",
+    ) -> None:
         """Open an SSM port-forwarding tunnel to the Wazuh dashboard.
 
         Args:
             terraform_outputs: Dictionary of Terraform outputs.
             local_port: Local port for port forwarding.
             remote_port: Remote dashboard port on the Wazuh instance.
+            local_address: Local bind address for the tunnel.
 
         Raises:
             OrchestrationError: If tunnel cannot be opened.
@@ -297,15 +304,24 @@ class DashboardOrchestrator:
             json.dumps({
                 "host": ["127.0.0.1"],
                 "portNumber": [str(remote_port)],
-                "localPortNumber": [str(local_port)]
+                "localPortNumber": [str(local_port)],
+                **({"localAddress": [local_address]} if local_address != "127.0.0.1" else {})
             }),
         ]
+
+        local_endpoint = f"https://{local_address}:{local_port}"
+        endpoint_message = f"Open [bold]{local_endpoint}[/bold] in your browser.\n"
+        if local_address == "0.0.0.0":
+            endpoint_message = (
+                f"Tunnel bound to all interfaces on port {local_port}. "
+                f"Use https://127.0.0.1:{local_port} or your Codespaces forwarded port.\n"
+            )
 
         console.print(
             Panel(
                 f"[bold green]Dashboard tunneling started[/bold green]\n\n"
                 f"{status_message}\n\n"
-                f"Open [bold]https://127.0.0.1:{local_port}[/bold] in your browser.\n"
+                f"{endpoint_message}"
                 "Use Ctrl+C to stop the session.",
                 title="Wazuh Dashboard",
                 expand=False,
