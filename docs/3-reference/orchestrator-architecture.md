@@ -282,6 +282,36 @@ dashboard.open_tunnel(
 )
 ```
 
+#### `status() -> dict[str, object]`
+Returns the current dashboard tunnel status, including:
+- `instance_id`
+- `local_port`
+- `uptime`
+- `alive`
+
+### CLI status
+
+The dashboard command group now supports:
+```bash
+cloud-soc dashboard status
+```
+This command reports whether a cached dashboard tunnel session is active, and displays the local port, instance, uptime, and health state.
+
+#### `ensure_alive(timeout: int = 3) -> bool`
+Checks whether the current SSM tunnel session is still active and TLS-valid.
+
+#### `get_or_reconnect(instance_id: str, local_port: int = 8443, remote_port: int = 443) -> TunnelSession`
+Returns the active session if it is healthy, or starts a fresh tunnel if it was dropped.
+
+#### `status() -> dict[str, object]`
+Returns observable session details:
+- `instance_id`
+- `local_port`
+- `uptime`
+- `alive`
+
+### Example: Access Dashboard
+
 ### Example: Access Dashboard
 
 ```python

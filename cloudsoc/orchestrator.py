@@ -9,7 +9,13 @@ Provides separation of concerns:
 import json
 import os
 import re
+import socket
+import ssl
+import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
+import signal
 from typing import Dict, List, Optional, Tuple
 
 import yaml
@@ -30,6 +36,225 @@ console = Console()
 
 class OrchestrationError(Exception):
     """Raised when orchestration fails."""
+
+
+@dataclass
+class TunnelSession:
+    instance_id: str
+    session_id: str
+    local_port: int
+    remote_port: int
+    process: Optional[subprocess.Popen]
+    started_at: float
+    pid: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "instance_id": self.instance_id,
+            "session_id": self.session_id,
+            "local_port": self.local_port,
+            "remote_port": self.remote_port,
+            "pid": self.pid,
+            "started_at": self.started_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TunnelSession":
+        return cls(
+            instance_id=data["instance_id"],
+            session_id=data["session_id"],
+            local_port=data["local_port"],
+            remote_port=data["remote_port"],
+            process=None,
+            pid=data["pid"],
+            started_at=data["started_at"],
+        )
+
+
+class SSMDashboardTunnelManager:
+    def __init__(self) -> None:
+        self.active_session: Optional[TunnelSession] = None
+
+    @property
+    def _state_file(self) -> Path:
+        state_dir = Path.home() / ".cloud-soc"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / "dashboard_tunnel.json"
+
+    def _save_state(self) -> None:
+        if not self.active_session:
+            return
+
+        self._state_file.write_text(json.dumps(self.active_session.to_dict()))
+
+    def _remove_state(self) -> None:
+        try:
+            self._state_file.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _load_state(self) -> None:
+        if self.active_session is not None:
+            return
+
+        if not self._state_file.exists():
+            return
+
+        try:
+            data = json.loads(self._state_file.read_text())
+            self.active_session = TunnelSession.from_dict(data)
+        except Exception:
+            self._remove_state()
+
+    def _kill_existing(self) -> None:
+        if self.active_session:
+            if self.active_session.process:
+                try:
+                    self.active_session.process.terminate()
+                except Exception:
+                    pass
+            elif self.active_session.pid:
+                try:
+                    os.kill(self.active_session.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+            self.active_session = None
+
+        subprocess.run(["pkill", "-f", "session-manager-plugin"], check=False)
+        subprocess.run(["pkill", "-f", "aws ssm start-session"], check=False)
+        self._remove_state()
+
+    def _free_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def start(self, instance_id: str, local_port: int, remote_port: int) -> TunnelSession:
+        self._kill_existing()
+
+        if local_port <= 0:
+            local_port = self._free_port()
+
+        command = [
+            "aws",
+            "ssm",
+            "start-session",
+            "--target",
+            instance_id,
+            "--document-name",
+            "AWS-StartPortForwardingSession",
+            "--parameters",
+            json.dumps({
+                "portNumber": [str(remote_port)],
+                "localPortNumber": [str(local_port)],
+            }),
+        ]
+
+        process = subprocess.Popen(command)
+        try:
+            pid = int(process.pid)
+        except (TypeError, ValueError):
+            pid = process.pid
+
+        session = TunnelSession(
+            instance_id=instance_id,
+            session_id=str(process.pid),
+            local_port=local_port,
+            remote_port=remote_port,
+            process=process,
+            pid=pid,
+            started_at=time.time(),
+        )
+
+        self.active_session = session
+        self._save_state()
+        return session
+
+    def _wait_for_local_port(self, timeout: int = 10) -> None:
+        if not self.active_session:
+            raise RuntimeError("No active SSM tunnel session")
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.active_session.process.poll() is not None:
+                raise RuntimeError("SSM tunnel process exited before the local port opened")
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.5)
+                try:
+                    sock.connect(("127.0.0.1", self.active_session.local_port))
+                    return
+                except OSError:
+                    time.sleep(0.2)
+
+        raise RuntimeError(f"Timed out waiting for local port {self.active_session.local_port} to open")
+
+    def validate_tls(self, timeout: int = 10) -> None:
+        if not self.active_session:
+            raise RuntimeError("No active SSM tunnel session")
+
+        self._wait_for_local_port(timeout=timeout)
+
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.active_session.process and self.active_session.process.poll() is not None:
+                raise RuntimeError("SSM tunnel process exited before TLS validation completed")
+
+            try:
+                with socket.create_connection(("127.0.0.1", self.active_session.local_port), timeout=1) as sock:
+                    with context.wrap_socket(sock, server_hostname="127.0.0.1"):
+                        return
+            except (ssl.SSLError, OSError):
+                time.sleep(0.2)
+
+        raise RuntimeError("TLS validation failed for local tunnel port")
+
+    def ensure_alive(self, timeout: int = 3) -> bool:
+        self._load_state()
+        if not self.active_session:
+            return False
+
+        if self.active_session.process and self.active_session.process.poll() is not None:
+            return False
+
+        if not self.active_session.process:
+            try:
+                os.kill(self.active_session.pid, 0)
+            except OSError:
+                return False
+
+        try:
+            self.validate_tls(timeout=timeout)
+            return True
+        except Exception:
+            return False
+
+    def get_or_reconnect(self, instance_id: str, local_port: int = 8443, remote_port: int = 443) -> TunnelSession:
+        if self.ensure_alive(timeout=3):
+            return self.active_session
+        return self.start(instance_id, local_port, remote_port)
+
+    def status(self) -> dict[str, object]:
+        self._load_state()
+        if not self.active_session:
+            return {"status": "No active session"}
+
+        alive = self.ensure_alive(timeout=3)
+        status = {
+            "instance_id": self.active_session.instance_id,
+            "local_port": self.active_session.local_port,
+            "uptime": time.time() - self.active_session.started_at,
+            "alive": alive,
+        }
+
+        if not alive:
+            self._remove_state()
+
+        return status
 
 
 class TerraformOrchestrator:
@@ -257,6 +482,7 @@ class DashboardOrchestrator:
             region=self.settings.project.aws.region,
             profile=self.settings.project.aws.profile
         )
+        self.tunnel_manager = SSMDashboardTunnelManager()
 
     def open_tunnel(
         self,
@@ -294,35 +520,16 @@ class DashboardOrchestrator:
             if diagnostics:
                 status_message += f"\n\nRemote diagnostics:\n{diagnostics}"
 
-        if expose:
+        if expose and not self._is_codespaces():
             self._assert_local_port_published(local_port)
-
-        document_name = "AWS-StartPortForwardingSession"
-        parameters = {
-            "portNumber": [str(remote_port)],
-            "localPortNumber": [str(local_port)],
-        }
-
-        command = [
-            "aws",
-            "ssm",
-            "start-session",
-            "--target",
-            instance_id,
-            "--document-name",
-            document_name,
-            "--parameters",
-            json.dumps(parameters),
-        ]
 
         local_endpoint = f"https://127.0.0.1:{local_port}"
         if expose:
             endpoint_message = (
-                f"SSM is bound to localhost inside this process. "
-                f"Ensure port {local_port} is exposed from your container or host environment "
-                "before accessing it from outside this container.\n"
+                f"SSM tunnel is now accessible via {local_endpoint} if port {local_port} "
+                "is exposed from the container or forwarded by your environment.\n"
             )
-            if os.getenv("CODESPACES") == "true" or os.getenv("GITHUB_CODESPACES") == "true":
+            if self._is_codespaces():
                 endpoint_message += (
                     f"In Codespaces, forward port {local_port} in the Ports tab and then open {local_endpoint}.\n"
                 )
@@ -341,13 +548,26 @@ class DashboardOrchestrator:
         )
 
         try:
-            run_command(command)
-        except ShellCommandError as e:
+            session = self.tunnel_manager.start(instance_id, local_port, remote_port)
+            self.tunnel_manager.validate_tls(timeout=10)
+            session.process.wait()
+        except KeyboardInterrupt:
+            self.tunnel_manager._kill_existing()
+            raise
+        except (FileNotFoundError, RuntimeError, OSError) as e:
+            self.tunnel_manager._kill_existing()
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
+
+    def status(self) -> dict[str, object]:
+        """Get current dashboard tunnel status."""
+        return self.tunnel_manager.status()
 
     def _assert_local_port_published(self, local_port: int) -> None:
         """Verify the requested local port is published from the dev container."""
         compose_file = Path("docker-compose.yml")
+        if self._is_codespaces():
+            return
+
         if not compose_file.exists():
             raise OrchestrationError(
                 "Unable to validate --expose because docker-compose.yml was not found in the current directory. "
@@ -384,6 +604,9 @@ class DashboardOrchestrator:
             f"Port {local_port} is not published from the dev container. "
             f"Add a port mapping such as `ports:\n  - \"{local_port}:{local_port}\"` to your docker-compose.yml."
         )
+
+    def _is_codespaces(self) -> bool:
+        return os.getenv("CODESPACES") == "true" or os.getenv("GITHUB_CODESPACES") == "true"
 
     def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
         """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""

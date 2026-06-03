@@ -19,6 +19,7 @@ from cloudsoc.orchestrator import (
 from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
+dashboard_app = typer.Typer(invoke_without_command=True)
 console = Console()
 
 
@@ -195,8 +196,9 @@ def deploy(
         raise typer.Exit(code=1)
 
 
-@app.command()
+@dashboard_app.callback(invoke_without_command=True)
 def dashboard(
+    ctx: typer.Context,
     local_port: int = typer.Option(
         8443,
         "--local-port",
@@ -214,6 +216,9 @@ def dashboard(
     ),
 ) -> None:
     """Open an SSM tunnel to the Wazuh Dashboard."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     console.print(
         Panel(
             "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Dashboard Access[/yellow]",
@@ -244,6 +249,44 @@ def dashboard(
         logger.error(f"Unexpected error: {e}")
         console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
         raise typer.Exit(code=1)
+
+
+@dashboard_app.command("status")
+def dashboard_status() -> None:
+    """Query the current dashboard tunnel status."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Dashboard Status[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        dashboard_orchestrator = DashboardOrchestrator()
+        status = dashboard_orchestrator.status()
+
+        if status.get("status") == "No active session":
+            console.print(Panel("[bold yellow]No active dashboard tunnel session[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Property")
+        table.add_column("Value")
+        table.add_row("Instance ID", str(status["instance_id"]))
+        table.add_row("Local Port", str(status["local_port"]))
+        table.add_row("Uptime", f"{status["uptime"]:.1f}s")
+        table.add_row("Alive", str(status["alive"]))
+
+        console.print(table)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        raise typer.Exit(code=1)
+
+
+app.add_typer(dashboard_app, name="dashboard")
 
 
 @app.command("import")

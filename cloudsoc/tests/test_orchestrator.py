@@ -1,15 +1,17 @@
 """Tests for orchestration helpers."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typer.testing import CliRunner
+from unittest.mock import MagicMock, Mock, patch
 import json
+import time
 import yaml
 import pytest
 from botocore.exceptions import ClientError
 
 from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
-from cloudsoc.orchestrator import DashboardOrchestrator, OrchestrationError
+from cloudsoc.orchestrator import DashboardOrchestrator, OrchestrationError, SSMDashboardTunnelManager, TunnelSession
 
 
 def test_ssm_wait_for_instance_online():
@@ -193,11 +195,20 @@ def test_dashboard_open_tunnel_expose_does_not_send_local_address(tmp_path, monk
         }, f)
 
     with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
-         patch("cloudsoc.orchestrator.run_command") as mock_run_command, \
+         patch("cloudsoc.orchestrator.subprocess.Popen") as mock_popen, \
+         patch("cloudsoc.orchestrator.subprocess.run", return_value=Mock()), \
+         patch("cloudsoc.orchestrator.SSMDashboardTunnelManager.validate_tls", return_value=None), \
          patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
         mock_ssm_service = Mock()
         mock_ssm_service.wait_for_instance.return_value = True
         mock_ssm_service_cls.return_value = mock_ssm_service
+
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None
+        mock_process.wait.return_value = 0
+        mock_process.__enter__.return_value = mock_process
+        mock_process.__exit__.return_value = None
+        mock_popen.return_value = mock_process
 
         dashboard = DashboardOrchestrator(settings=mock_settings)
         dashboard.open_tunnel(
@@ -207,8 +218,8 @@ def test_dashboard_open_tunnel_expose_does_not_send_local_address(tmp_path, monk
             expose=True,
         )
 
-        assert mock_run_command.called
-        command = mock_run_command.call_args[0][0]
+        assert mock_popen.called
+        command = mock_popen.call_args[0][0]
         assert "AWS-StartPortForwardingSession" in command
         params = json.loads(command[-1])
         assert "localAddress" not in params
@@ -235,11 +246,20 @@ def test_dashboard_open_tunnel_expose_validates_container_port(tmp_path, monkeyp
         yaml.dump(compose_content, f)
 
     with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
-         patch("cloudsoc.orchestrator.run_command") as mock_run_command, \
+         patch("cloudsoc.orchestrator.subprocess.Popen") as mock_popen, \
+         patch("cloudsoc.orchestrator.subprocess.run", return_value=Mock()), \
+         patch("cloudsoc.orchestrator.SSMDashboardTunnelManager.validate_tls", return_value=None), \
          patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
         mock_ssm_service = Mock()
         mock_ssm_service.wait_for_instance.return_value = True
         mock_ssm_service_cls.return_value = mock_ssm_service
+
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None
+        mock_process.wait.return_value = 0
+        mock_process.__enter__.return_value = mock_process
+        mock_process.__exit__.return_value = None
+        mock_popen.return_value = mock_process
 
         dashboard = DashboardOrchestrator(settings=mock_settings)
         dashboard.open_tunnel(
@@ -249,7 +269,7 @@ def test_dashboard_open_tunnel_expose_validates_container_port(tmp_path, monkeyp
             expose=True,
         )
 
-        assert mock_run_command.called
+        assert mock_popen.called
 
 
 def test_dashboard_open_tunnel_expose_rejects_missing_container_port(tmp_path, monkeypatch):
@@ -271,6 +291,9 @@ def test_dashboard_open_tunnel_expose_rejects_missing_container_port(tmp_path, m
     with open(tmp_path / "docker-compose.yml", "w") as f:
         yaml.dump(compose_content, f)
 
+    monkeypatch.delenv("CODESPACES", raising=False)
+    monkeypatch.delenv("GITHUB_CODESPACES", raising=False)
+
     with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
          patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
         mock_ssm_service = Mock()
@@ -285,3 +308,96 @@ def test_dashboard_open_tunnel_expose_rejects_missing_container_port(tmp_path, m
                 remote_port=443,
                 expose=True,
             )
+
+
+def test_dashboard_status_command_no_session(monkeypatch):
+    runner = CliRunner()
+    with patch("cloudsoc.orchestrator.DashboardOrchestrator.status", return_value={"status": "No active session"}):
+        result = runner.invoke(__import__("cloudsoc.main", fromlist=["app"]).app, ["dashboard", "status"])
+
+    assert result.exit_code == 0
+    assert "No active dashboard tunnel session" in result.output
+
+
+def test_dashboard_status_command_reports_active_session(monkeypatch):
+    runner = CliRunner()
+    with patch("cloudsoc.orchestrator.DashboardOrchestrator.status", return_value={
+        "instance_id": "i-123",
+        "local_port": 8443,
+        "uptime": 5.0,
+        "alive": True,
+    }):
+        result = runner.invoke(__import__("cloudsoc.main", fromlist=["app"]).app, ["dashboard", "status"])
+
+    assert result.exit_code == 0
+    assert "Instance ID" in result.output
+    assert "i-123" in result.output
+    assert "Local Port" in result.output
+    assert "8443" in result.output
+
+
+def test_tunnel_manager_ensure_alive_returns_false_for_dead_process():
+    manager = SSMDashboardTunnelManager()
+    fake_process = MagicMock()
+    fake_process.poll.return_value = 1
+    manager.active_session = TunnelSession(
+        instance_id="i-123",
+        session_id="123",
+        local_port=8443,
+        remote_port=443,
+        process=fake_process,
+        started_at=time.time() - 10,
+    )
+
+    assert manager.ensure_alive(timeout=0.1) is False
+
+
+def test_tunnel_manager_get_or_reconnect_restarts_dead_session():
+    manager = SSMDashboardTunnelManager()
+    fake_process = MagicMock()
+    fake_process.poll.return_value = 1
+    manager.active_session = TunnelSession(
+        instance_id="i-123",
+        session_id="123",
+        local_port=8443,
+        remote_port=443,
+        process=fake_process,
+        started_at=time.time() - 10,
+    )
+
+    with patch.object(manager, "start", return_value=TunnelSession(
+        instance_id="i-123",
+        session_id="456",
+        local_port=9443,
+        remote_port=443,
+        process=MagicMock(poll=MagicMock(return_value=None), wait=MagicMock(return_value=0)),
+        started_at=time.time(),
+    )) as mock_start:
+        session = manager.get_or_reconnect("i-123", local_port=9443, remote_port=443)
+
+    assert mock_start.called
+    assert session.local_port == 9443
+
+
+def test_tunnel_manager_status_reports_session_details(monkeypatch):
+    manager = SSMDashboardTunnelManager()
+    fake_process = MagicMock()
+    fake_process.poll.return_value = None
+    started_at = 1000.0
+    manager.active_session = TunnelSession(
+        instance_id="i-123",
+        session_id="123",
+        local_port=8443,
+        remote_port=443,
+        process=fake_process,
+        started_at=started_at,
+    )
+
+    monkeypatch.setattr("cloudsoc.orchestrator.time.time", lambda: started_at + 10)
+    with patch.object(manager, "ensure_alive", return_value=True):
+        status = manager.status()
+
+    assert status["instance_id"] == "i-123"
+    assert status["local_port"] == 8443
+    assert status["uptime"] == 10
+    assert status["alive"] is True

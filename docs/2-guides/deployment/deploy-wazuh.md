@@ -300,6 +300,19 @@ The tunnel:
 - Works with private instances in VPC
 - Closes when you press Ctrl+C
 
+### Reliable SSM Tunneling
+
+The dashboard command now relies only on `AWS-StartPortForwardingSession` and does not use any custom local TCP proxy. The current implementation:
+- validates the SSM tunnel by checking the local port and performing a TLS handshake
+- tracks a single active tunnel session
+- can recover from dropped or restarted sessions
+- avoids hardcoded port mapping where possible by allowing `--local-port`
+
+Why this was failing:
+- SSM tunnel was correct
+- the old Python socket proxy layer could corrupt TLS traffic
+- Docker port mapping was a separate concern and should not be mixed into tunnel reliability
+
 ### Custom Ports
 
 Forward to a different local port:
@@ -315,6 +328,11 @@ cloud-soc dashboard --remote-port 8443
 Run the tunnel and print guidance for exposing the forwarded local port from the container or host environment:
 ```bash
 cloud-soc dashboard --expose
+```
+
+Check whether a dashboard tunnel is currently active:
+```bash
+cloud-soc dashboard status
 ```
 
 ## Deployment Workflow Examples
