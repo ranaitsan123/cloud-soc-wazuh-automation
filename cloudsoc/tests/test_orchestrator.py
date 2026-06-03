@@ -4,11 +4,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import json
 import yaml
+import pytest
 from botocore.exceptions import ClientError
 
 from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
-from cloudsoc.orchestrator import DashboardOrchestrator
+from cloudsoc.orchestrator import DashboardOrchestrator, OrchestrationError
 
 
 def test_ssm_wait_for_instance_online():
@@ -175,10 +176,21 @@ def test_deployment_service_runs_tasks(tmp_path):
         assert result is True
 
 
-def test_dashboard_open_tunnel_expose_does_not_send_local_address():
+def test_dashboard_open_tunnel_expose_does_not_send_local_address(tmp_path, monkeypatch):
     mock_settings = Mock()
     mock_settings.project.aws.region = "us-east-1"
     mock_settings.project.aws.profile = "default"
+
+    monkeypatch.chdir(tmp_path)
+    with open(tmp_path / "docker-compose.yml", "w") as f:
+        yaml.dump({
+            "services": {
+                "devops": {
+                    "image": "example",
+                    "ports": ["9443:9443"]
+                }
+            }
+        }, f)
 
     with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
          patch("cloudsoc.orchestrator.run_command") as mock_run_command, \
@@ -201,3 +213,75 @@ def test_dashboard_open_tunnel_expose_does_not_send_local_address():
         params = json.loads(command[-1])
         assert "localAddress" not in params
         assert params["localPortNumber"] == ["9443"]
+
+
+def test_dashboard_open_tunnel_expose_validates_container_port(tmp_path, monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    compose_content = {
+        "version": "3.8",
+        "services": {
+            "devops": {
+                "image": "example",
+                "ports": ["8443:8443"]
+            }
+        }
+    }
+
+    monkeypatch.chdir(tmp_path)
+    with open(tmp_path / "docker-compose.yml", "w") as f:
+        yaml.dump(compose_content, f)
+
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
+         patch("cloudsoc.orchestrator.run_command") as mock_run_command, \
+         patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
+        mock_ssm_service = Mock()
+        mock_ssm_service.wait_for_instance.return_value = True
+        mock_ssm_service_cls.return_value = mock_ssm_service
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        dashboard.open_tunnel(
+            {"wazuh_instance_id": {"value": "i-123"}},
+            local_port=8443,
+            remote_port=443,
+            expose=True,
+        )
+
+        assert mock_run_command.called
+
+
+def test_dashboard_open_tunnel_expose_rejects_missing_container_port(tmp_path, monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    compose_content = {
+        "version": "3.8",
+        "services": {
+            "devops": {
+                "image": "example",
+                "ports": ["8080:8080"]
+            }
+        }
+    }
+
+    monkeypatch.chdir(tmp_path)
+    with open(tmp_path / "docker-compose.yml", "w") as f:
+        yaml.dump(compose_content, f)
+
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls, \
+         patch.object(DashboardOrchestrator, "_monitor_dashboard_service", return_value=(True, "")):
+        mock_ssm_service = Mock()
+        mock_ssm_service.wait_for_instance.return_value = True
+        mock_ssm_service_cls.return_value = mock_ssm_service
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        with pytest.raises(OrchestrationError, match="Port 8443 is not published"):
+            dashboard.open_tunnel(
+                {"wazuh_instance_id": {"value": "i-123"}},
+                local_port=8443,
+                remote_port=443,
+                expose=True,
+            )

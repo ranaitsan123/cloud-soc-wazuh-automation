@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 
@@ -293,6 +294,9 @@ class DashboardOrchestrator:
             if diagnostics:
                 status_message += f"\n\nRemote diagnostics:\n{diagnostics}"
 
+        if expose:
+            self._assert_local_port_published(local_port)
+
         document_name = "AWS-StartPortForwardingSession"
         parameters = {
             "portNumber": [str(remote_port)],
@@ -340,6 +344,46 @@ class DashboardOrchestrator:
             run_command(command)
         except ShellCommandError as e:
             raise OrchestrationError(f"Failed to start dashboard tunnel: {e}") from e
+
+    def _assert_local_port_published(self, local_port: int) -> None:
+        """Verify the requested local port is published from the dev container."""
+        compose_file = Path("docker-compose.yml")
+        if not compose_file.exists():
+            raise OrchestrationError(
+                "Unable to validate --expose because docker-compose.yml was not found in the current directory. "
+                "Run from the repository root or expose the port manually."
+            )
+
+        try:
+            compose_config = yaml.safe_load(compose_file.read_text()) or {}
+        except Exception as e:
+            raise OrchestrationError(
+                f"Failed to parse docker-compose.yml for --expose validation: {e}"
+            ) from e
+
+        services = compose_config.get("services", {})
+        for service in services.values():
+            ports = service.get("ports", []) or []
+            for port_mapping in ports:
+                if isinstance(port_mapping, str):
+                    parts = port_mapping.split(":")
+                    if len(parts) == 2:
+                        host_port, container_port = parts
+                    elif len(parts) == 3:
+                        _, host_port, container_port = parts
+                    else:
+                        continue
+
+                    if host_port == str(local_port) and container_port == str(local_port):
+                        return
+                elif isinstance(port_mapping, dict):
+                    if str(port_mapping.get("published", "")) == str(local_port) and str(port_mapping.get("target", "")) == str(local_port):
+                        return
+
+        raise OrchestrationError(
+            f"Port {local_port} is not published from the dev container. "
+            f"Add a port mapping such as `ports:\n  - \"{local_port}:{local_port}\"` to your docker-compose.yml."
+        )
 
     def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
         """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
