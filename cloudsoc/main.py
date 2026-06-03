@@ -210,7 +210,7 @@ def dashboard(
     expose: bool = typer.Option(
         False,
         "--expose",
-        help="Bind the local dashboard tunnel to all interfaces for Codespaces or remote access"
+        help="Print guidance for exposing the forwarded port from the container/host environment"
     ),
 ) -> None:
     """Open an SSM tunnel to the Wazuh Dashboard."""
@@ -235,7 +235,7 @@ def dashboard(
             terraform_outputs,
             local_port=local_port,
             remote_port=remote_port,
-            local_address="0.0.0.0" if expose else "127.0.0.1"
+            expose=expose,
         )
     except OrchestrationError as e:
         console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))

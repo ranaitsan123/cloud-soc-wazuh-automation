@@ -7,6 +7,7 @@ Provides separation of concerns:
 """
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -261,7 +262,7 @@ class DashboardOrchestrator:
         terraform_outputs: Dict,
         local_port: int = 8443,
         remote_port: int = 443,
-        local_address: str = "127.0.0.1",
+        expose: bool = False,
     ) -> None:
         """Open an SSM port-forwarding tunnel to the Wazuh dashboard.
 
@@ -269,7 +270,7 @@ class DashboardOrchestrator:
             terraform_outputs: Dictionary of Terraform outputs.
             local_port: Local port for port forwarding.
             remote_port: Remote dashboard port on the Wazuh instance.
-            local_address: Local bind address for the tunnel.
+            expose: Whether to indicate the port should be exposed by the container/host environment.
 
         Raises:
             OrchestrationError: If tunnel cannot be opened.
@@ -292,6 +293,12 @@ class DashboardOrchestrator:
             if diagnostics:
                 status_message += f"\n\nRemote diagnostics:\n{diagnostics}"
 
+        document_name = "AWS-StartPortForwardingSession"
+        parameters = {
+            "portNumber": [str(remote_port)],
+            "localPortNumber": [str(local_port)],
+        }
+
         command = [
             "aws",
             "ssm",
@@ -299,23 +306,24 @@ class DashboardOrchestrator:
             "--target",
             instance_id,
             "--document-name",
-            "AWS-StartPortForwardingSessionToRemoteHost",
+            document_name,
             "--parameters",
-            json.dumps({
-                "host": ["127.0.0.1"],
-                "portNumber": [str(remote_port)],
-                "localPortNumber": [str(local_port)],
-                **({"localAddress": [local_address]} if local_address != "127.0.0.1" else {})
-            }),
+            json.dumps(parameters),
         ]
 
-        local_endpoint = f"https://{local_address}:{local_port}"
-        endpoint_message = f"Open [bold]{local_endpoint}[/bold] in your browser.\n"
-        if local_address == "0.0.0.0":
+        local_endpoint = f"https://127.0.0.1:{local_port}"
+        if expose:
             endpoint_message = (
-                f"Tunnel bound to all interfaces on port {local_port}. "
-                f"Use https://127.0.0.1:{local_port} or your Codespaces forwarded port.\n"
+                f"SSM is bound to localhost inside this process. "
+                f"Ensure port {local_port} is exposed from your container or host environment "
+                "before accessing it from outside this container.\n"
             )
+            if os.getenv("CODESPACES") == "true" or os.getenv("GITHUB_CODESPACES") == "true":
+                endpoint_message += (
+                    f"In Codespaces, forward port {local_port} in the Ports tab and then open {local_endpoint}.\n"
+                )
+        else:
+            endpoint_message = f"Open [bold]{local_endpoint}[/bold] in your browser.\n"
 
         console.print(
             Panel(

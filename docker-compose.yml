@@ -19,4 +19,7 @@ services:
 
     working_dir: /workspace
 
+    ports:
+      - "8443:8443"
+
     tty: true

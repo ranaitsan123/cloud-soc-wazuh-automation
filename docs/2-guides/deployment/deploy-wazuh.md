@@ -312,7 +312,7 @@ Or connect to a different remote port:
 cloud-soc dashboard --remote-port 8443
 ```
 
-Run the tunnel in Codespaces or another environment where local port bindings must be exposed:
+Run the tunnel and print guidance for exposing the forwarded local port from the container or host environment:
 ```bash
 cloud-soc dashboard --expose
 ```

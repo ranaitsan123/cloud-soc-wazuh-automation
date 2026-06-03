@@ -175,7 +175,7 @@ def test_deployment_service_runs_tasks(tmp_path):
         assert result is True
 
 
-def test_dashboard_open_tunnel_expose_binds_all_interfaces():
+def test_dashboard_open_tunnel_expose_does_not_send_local_address():
     mock_settings = Mock()
     mock_settings.project.aws.region = "us-east-1"
     mock_settings.project.aws.profile = "default"
@@ -192,12 +192,12 @@ def test_dashboard_open_tunnel_expose_binds_all_interfaces():
             {"wazuh_instance_id": {"value": "i-123"}},
             local_port=9443,
             remote_port=443,
-            local_address="0.0.0.0",
+            expose=True,
         )
 
         assert mock_run_command.called
         command = mock_run_command.call_args[0][0]
-        assert "AWS-StartPortForwardingSessionToRemoteHost" in command
+        assert "AWS-StartPortForwardingSession" in command
         params = json.loads(command[-1])
-        assert params["localAddress"] == ["0.0.0.0"]
+        assert "localAddress" not in params
         assert params["localPortNumber"] == ["9443"]
