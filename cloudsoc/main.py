@@ -274,7 +274,7 @@ def dashboard_status() -> None:
         table.add_column("Value")
         table.add_row("Instance ID", str(status["instance_id"]))
         table.add_row("Local Port", str(status["local_port"]))
-        table.add_row("Uptime", f"{status["uptime"]:.1f}s")
+        table.add_row("Uptime", f"{status['uptime']:.1f}s")
         table.add_row("Alive", str(status["alive"]))
 
         console.print(table)
