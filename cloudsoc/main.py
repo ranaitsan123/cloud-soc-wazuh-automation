@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
@@ -21,6 +22,10 @@ from cloudsoc.utils.logger import logger, setup_logger
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
 dashboard_app = typer.Typer(invoke_without_command=True)
 console = Console()
+
+
+def _render_error_panel(message: str) -> Panel:
+    return Panel(Text(message, style="bold red"), expand=False)
 
 
 @app.callback()
@@ -103,11 +108,11 @@ def apply(
         )
 
     except (TerraformStateError, OrchestrationError) as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -188,11 +193,11 @@ def deploy(
         )
 
     except OrchestrationError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -243,11 +248,11 @@ def dashboard(
             expose=expose,
         )
     except OrchestrationError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -282,7 +287,7 @@ def dashboard_status() -> None:
         raise
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -321,11 +326,11 @@ def import_resource(
             )
         )
     except TerraformStateError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -376,7 +381,7 @@ def destroy(
         )
 
     except TerraformStateError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
