@@ -159,6 +159,12 @@ cloud-soc deploy --skip-validation
 # Open Wazuh dashboard via SSM tunnel
 cloud-soc dashboard
 
+# Check deployment progress
+cloud-soc deployment status
+
+# List active SSM sessions and agent health
+cloud-soc ssm sessions
+
 # Import existing AWS resource
 cloud-soc import aws_vpc.wazuh_vpc vpc-0123456789abcdef0
 
@@ -181,9 +187,12 @@ sleep 30
 cloud-soc deploy
 
 # 4. Check deployment status
-cloud-soc status
+cloud-soc deployment status
 
-# 5. Access dashboard
+# 5. (Optional) Inspect active SSM sessions
+cloud-soc ssm sessions
+
+# 6. Access dashboard
 cloud-soc dashboard
 
 # Open in browser: https://127.0.0.1:8443
@@ -258,6 +267,8 @@ cloud-soc deploy wazuh  # Infrastructure still exists!
 | `cloud-soc apply` | TerraformOrchestrator | Provision AWS infrastructure |
 | `cloud-soc deploy [targets]` | DeploymentOrchestrator | Deploy services via SSM |
 | `cloud-soc dashboard` | DashboardOrchestrator | Access Wazuh dashboard |
+| `cloud-soc deployment status` | DeploymentOrchestrator | Show latest deployment status |
+| `cloud-soc ssm sessions` | SSMService | List active SSM sessions |
 | `cloud-soc status` | EC2Service | Show infrastructure status |
 | `cloud-soc validate` | TerraformRunner | Validate configuration |
 | `cloud-soc destroy` | TerraformRunner | Destroy infrastructure |

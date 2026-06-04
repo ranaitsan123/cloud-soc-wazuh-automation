@@ -310,6 +310,40 @@ def test_dashboard_open_tunnel_expose_rejects_missing_container_port(tmp_path, m
             )
 
 
+def test_monitor_dashboard_service_parses_adjacent_markers(monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.return_value = "command-123"
+    mock_ssm.wait_for_command.return_value = {
+        "status": "Success",
+        "return_code": 0,
+        "output": (
+            "---curl-status---\n"
+            "302---opensearch-status---\n"
+            "200\n"
+            "---docker-ps---\n"
+            "mock ps output\n"
+            "---dashboard-logs---\n"
+            "dashboard log line\n"
+            "---indexer-logs---\n"
+            "indexer log line\n"
+        ),
+        "error": "",
+    }
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_cls:
+        mock_ssm_cls.return_value = mock_ssm
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        ready, diagnostics = dashboard._monitor_dashboard_service("i-123", remote_port=443)
+
+    assert ready is True
+    assert "Dashboard is responding" in diagnostics
+    assert "mock ps output" in diagnostics
+
+
 def test_dashboard_status_command_no_session(monkeypatch):
     runner = CliRunner()
     with patch("cloudsoc.orchestrator.DashboardOrchestrator.status", return_value={"status": "No active session"}):
@@ -401,3 +435,62 @@ def test_tunnel_manager_status_reports_session_details(monkeypatch):
     assert status["local_port"] == 8443
     assert status["uptime"] == 10
     assert status["alive"] is True
+
+
+def test_ssm_service_list_active_sessions_and_health():
+    with patch("cloudsoc.aws.ssm.boto3.Session") as mock_session:
+        mock_client = Mock()
+        mock_client.describe_sessions.return_value = {
+            "Sessions": [
+                {
+                    "SessionId": "s-123",
+                    "Target": "i-123",
+                    "DocumentName": "AWS-StartPortForwardingSession",
+                    "Status": "Active",
+                    "Owner": "tester",
+                    "StartDate": "2025-01-01T00:00:00Z",
+                }
+            ]
+        }
+        mock_client.describe_instance_information.return_value = {
+            "InstanceInformationList": [
+                {
+                    "InstanceId": "i-123",
+                    "PingStatus": "Online",
+                    "PlatformType": "Linux",
+                    "IPAddress": "10.0.0.1",
+                    "ComputerName": "i-123",
+                }
+            ]
+        }
+        mock_session.return_value.client.return_value = mock_client
+
+        ssm = SSMService(region="eu-north-1")
+        sessions = ssm.list_active_sessions()
+        assert sessions is not None
+        assert sessions[0]["SessionId"] == "s-123"
+
+        health = ssm.get_instance_health(["i-123"])
+        assert health["i-123"]["PingStatus"] == "Online"
+
+
+def test_ssm_sessions_command_no_sessions(monkeypatch):
+    runner = CliRunner()
+    with patch("cloudsoc.main.SSMService") as mock_ssm_cls:
+        mock_ssm = Mock()
+        mock_ssm.list_active_sessions.return_value = []
+        mock_ssm_cls.return_value = mock_ssm
+
+        result = runner.invoke(__import__("cloudsoc.main", fromlist=["app"]).app, ["ssm", "sessions"])
+
+    assert result.exit_code == 0
+    assert "No active SSM sessions found" in result.output
+
+
+def test_deployment_status_command_no_history(monkeypatch):
+    runner = CliRunner()
+    with patch("cloudsoc.orchestrator.DeploymentOrchestrator.get_deployment_status", return_value={"status": "No deployment history recorded"}):
+        result = runner.invoke(__import__("cloudsoc.main", fromlist=["app"]).app, ["deployment", "status"])
+
+    assert result.exit_code == 0
+    assert "No deployment history found" in result.output

@@ -253,6 +253,70 @@ class SSMService:
         self.logger.warning(f"SSM did not become ready for instance {instance_id} within {timeout} seconds")
         return False
 
+    def list_active_sessions(
+        self,
+        state: str = "Active",
+        max_results: int = 50,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        List active SSM sessions.
+
+        Args:
+            state: Session state to filter by (default: Active)
+            max_results: Maximum number of sessions to return
+
+        Returns:
+            List of session dictionaries or None if failed
+        """
+        try:
+            response = self.client.describe_sessions(
+                State=state,
+                MaxResults=max_results,
+            )
+            return response.get("Sessions", [])
+        except ClientError as e:
+            self.logger.error(f"Failed to list SSM sessions: {e}")
+            return None
+
+    def get_instance_health(
+        self,
+        instance_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Get health information for SSM-managed instances.
+
+        Args:
+            instance_ids: List of EC2 instance IDs
+
+        Returns:
+            Mapping of instance ID to health information
+        """
+        if not instance_ids:
+            return {}
+
+        try:
+            response = self.client.describe_instance_information(
+                Filters=[
+                    {
+                        "Key": "InstanceIds",
+                        "Values": instance_ids,
+                    }
+                ]
+            )
+
+            results: Dict[str, Dict[str, Any]] = {}
+            for instance in response.get("InstanceInformationList", []):
+                results[instance.get("InstanceId")] = {
+                    "PingStatus": instance.get("PingStatus"),
+                    "PlatformType": instance.get("PlatformType"),
+                    "IPAddress": instance.get("IPAddress"),
+                    "ComputerName": instance.get("ComputerName"),
+                }
+            return results
+        except ClientError as e:
+            self.logger.error(f"Failed to get instance health: {e}")
+            return {}
+
     def delete_parameter(self, name: str) -> bool:
         """
         Delete SSM parameter.

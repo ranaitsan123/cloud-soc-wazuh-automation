@@ -188,6 +188,20 @@ Validates that deployment is healthy.
 deployment.validate_deployment(terraform_outputs)
 ```
 
+#### `get_deployment_status() -> dict[str, object]`
+Returns the most recent saved deployment status.
+
+This status is stored in `~/.cloud-soc/deployment_state.json` and includes:
+- overall deployment state: `in_progress`, `success`, or `failed`
+- per-target progress
+- timestamps for target start/finish
+- error details for failed targets
+
+```python
+status = deployment.get_deployment_status()
+print(status)
+```
+
 ### Example: Full Deployment Workflow
 
 ```python

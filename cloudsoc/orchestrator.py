@@ -347,6 +347,7 @@ class DeploymentOrchestrator:
     - Running deployment playbooks
     - Validating deployment completion
     - Managing target-based deployments
+    - Persisting deployment state and status
     """
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -361,6 +362,74 @@ class DeploymentOrchestrator:
             profile=self.settings.project.aws.profile
         )
         self.deployment_service = DeploymentService(deployment_dir=Path("playbooks"))
+
+    @property
+    def deployment_state_file(self) -> Path:
+        state_dir = Path.home() / ".cloud-soc"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / "deployment_state.json"
+
+    def _load_deployment_state(self) -> dict:
+        if not self.deployment_state_file.exists():
+            return {}
+
+        try:
+            return json.loads(self.deployment_state_file.read_text())
+        except Exception:
+            return {}
+
+    def _save_deployment_state(self, state: dict) -> None:
+        self.deployment_state_file.write_text(json.dumps(state, indent=2))
+
+    def _initialize_deployment_state(self, deployment_names: List[str]) -> dict:
+        now = time.time()
+        state = {
+            "last_deployment": {
+                "started_at": now,
+                "finished_at": None,
+                "status": "in_progress",
+                "targets": {
+                    name: {
+                        "status": "pending",
+                        "started_at": None,
+                        "finished_at": None,
+                        "error": "",
+                    }
+                    for name in deployment_names
+                },
+            }
+        }
+        self._save_deployment_state(state)
+        return state
+
+    def _update_target_state(self, state: dict, deployment_name: str, status: str, error: str = "") -> None:
+        target_state = state["last_deployment"]["targets"].get(deployment_name)
+        if not target_state:
+            return
+
+        now = time.time()
+        if status == "in_progress":
+            target_state["started_at"] = now
+        target_state["finished_at"] = now if status in {"success", "failed"} else None
+        target_state["status"] = status
+        target_state["error"] = error
+        self._save_deployment_state(state)
+
+    def get_deployment_status(self) -> dict[str, object]:
+        state = self._load_deployment_state()
+        last = state.get("last_deployment")
+        if not last:
+            return {"status": "No deployment history recorded"}
+
+        success = all(
+            target.get("status") == "success"
+            for target in last.get("targets", {}).values()
+        )
+        if last.get("status") == "in_progress" and success:
+            last["status"] = "success"
+            self._save_deployment_state(state)
+
+        return last
 
     def wait_for_ssm_ready(self, instance_ids: List[str], timeout: int = 600, poll_interval: int = 15) -> None:
         """Wait for SSM agent to be ready on instances.
@@ -415,39 +484,60 @@ class DeploymentOrchestrator:
             "victim_server": terraform_outputs.get("victim_instance_id", {}).get("value"),
         }
 
-        for target in targets:
-            deployment_name = target_mapping.get(target, target)
-            instance_id = instance_ids_map.get(deployment_name)
+        deployment_names = [target_mapping.get(target, target) for target in targets]
+        state = self._initialize_deployment_state(deployment_names)
 
-            if not instance_id:
-                raise OrchestrationError(f"Missing instance ID for deployment target: {deployment_name}")
+        try:
+            for target in targets:
+                deployment_name = target_mapping.get(target, target)
+                instance_id = instance_ids_map.get(deployment_name)
 
-            # Prepare deployment-specific variables
-            if deployment_name == "wazuh_manager":
-                variables = {
-                    "s3_bucket_name": terraform_outputs.get("s3_bucket_name", {}).get("value", ""),
-                    "s3_prefix": terraform_outputs.get("s3_prefix", {}).get("value", "wazuh-docker"),
-                }
-            elif deployment_name == "victim_server":
-                variables = {
-                    "wazuh_manager_ip": terraform_outputs.get("wazuh_instance_private_ip", {}).get("value", "127.0.0.1"),
-                    "aws_region": self.settings.project.aws.region,
-                    "ecr_victim_repository_url": terraform_outputs.get("ecr_victim_repository_url", {}).get("value", ""),
-                }
-            else:
-                # For future deployments, pass all outputs as variables
-                variables = terraform_outputs
+                if not instance_id:
+                    raise OrchestrationError(f"Missing instance ID for deployment target: {deployment_name}")
 
-            if not self.deployment_service.run_deployment(
-                deployment_name,
-                variables=variables,
-                ssm_service=self.ssm_service,
-                instance_ids=[instance_id],
-            ):
+                self._update_target_state(state, deployment_name, "in_progress")
+
+                # Prepare deployment-specific variables
+                if deployment_name == "wazuh_manager":
+                    variables = {
+                        "s3_bucket_name": terraform_outputs.get("s3_bucket_name", {}).get("value", ""),
+                        "s3_prefix": terraform_outputs.get("s3_prefix", {}).get("value", "wazuh-docker"),
+                    }
+                elif deployment_name == "victim_server":
+                    variables = {
+                        "wazuh_manager_ip": terraform_outputs.get("wazuh_instance_private_ip", {}).get("value", "127.0.0.1"),
+                        "aws_region": self.settings.project.aws.region,
+                        "ecr_victim_repository_url": terraform_outputs.get("ecr_victim_repository_url", {}).get("value", ""),
+                    }
+                else:
+                    # For future deployments, pass all outputs as variables
+                    variables = terraform_outputs
+
+                success = self.deployment_service.run_deployment(
+                    deployment_name,
+                    variables=variables,
+                    ssm_service=self.ssm_service,
+                    instance_ids=[instance_id],
+                )
+
+                if success:
+                    self._update_target_state(state, deployment_name, "success")
+                    continue
+
                 error_detail = self.deployment_service.last_error or "See logs for details."
+                self._update_target_state(state, deployment_name, "failed", error=error_detail)
                 raise OrchestrationError(
                     f"Deployment to {deployment_name} failed: {error_detail}"
                 )
+        except OrchestrationError:
+            state["last_deployment"]["finished_at"] = time.time()
+            state["last_deployment"]["status"] = "failed"
+            self._save_deployment_state(state)
+            raise
+
+        state["last_deployment"]["finished_at"] = time.time()
+        state["last_deployment"]["status"] = "success"
+        self._save_deployment_state(state)
 
     def validate_deployment(self, terraform_outputs: Dict) -> None:
         """Validate that deployment is healthy.
@@ -464,6 +554,14 @@ class DeploymentOrchestrator:
 
         if not self.ssm_service.wait_for_instance(wazuh_id, timeout=120, poll_interval=10):
             raise OrchestrationError("Deployment validation failed: Wazuh instance is not available via SSM")
+
+        dashboard = DashboardOrchestrator(settings=self.settings)
+        dashboard_ready, diagnostics = dashboard._monitor_dashboard_service(wazuh_id, remote_port=443)
+        if not dashboard_ready:
+            message = "Deployment validation failed: remote dashboard health check failed."
+            if diagnostics:
+                message += f"\n{diagnostics}"
+            raise OrchestrationError(message)
 
         console.print(Panel("[bold green]✓ Deployment validated successfully[/bold green]", expand=False))
 
@@ -613,9 +711,9 @@ class DashboardOrchestrator:
         health_script = [
             "set +e",
             "echo '---curl-status---'",
-            f"curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port} || true",
+            f"curl -k -s -o /dev/null -w '%{{http_code}}\n' https://127.0.0.1:{remote_port} || true",
             "echo '---opensearch-status---'",
-            "curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:9200 || true",
+            "curl -k -s -o /dev/null -w '%{http_code}\n' https://127.0.0.1:9200 || true",
             "echo '---docker-ps---'",
             "docker compose -f /opt/wazuh/docker-compose.yml ps || true",
             "echo '---dashboard-logs---'",
@@ -654,7 +752,7 @@ class DashboardOrchestrator:
                 diagnostics.append(error)
             return False, "\n".join(diagnostics).strip()
 
-        parsed = dict(re.findall(r"^---(?P<name>[a-z-]+)---\s*\n(?P<body>.*?)(?=^---[a-z-]+---\s*$|\Z)", output, flags=re.MULTILINE | re.DOTALL))
+        parsed = dict(re.findall(r"---(?P<name>[a-z-]+)---(.*?)(?=---[a-z-]+---|\Z)", output, flags=re.DOTALL))
         curl_status = parsed.get("curl-status", "").strip().splitlines()[0] if parsed.get("curl-status") else ""
         opensearch_status = parsed.get("opensearch-status", "").strip().splitlines()[0] if parsed.get("opensearch-status") else ""
 

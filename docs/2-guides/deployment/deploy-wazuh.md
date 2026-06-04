@@ -335,6 +335,16 @@ Check whether a dashboard tunnel is currently active:
 cloud-soc dashboard status
 ```
 
+View the last deployment progress and per-target status:
+```bash
+cloud-soc deployment status
+```
+
+List active SSM session connections and agent health:
+```bash
+cloud-soc ssm sessions
+```
+
 ## Deployment Workflow Examples
 
 ### Example 1: Full Deployment

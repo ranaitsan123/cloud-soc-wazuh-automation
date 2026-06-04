@@ -58,6 +58,8 @@ Security model including:
 | `cloud-soc apply` | TerraformOrchestrator | Provision infrastructure (Terraform only) |
 | `cloud-soc deploy` | DeploymentOrchestrator | Deploy services (SSM + YAML) |
 | `cloud-soc dashboard` | DashboardOrchestrator | Open dashboard tunnel |
+| `cloud-soc deployment status` | DeploymentOrchestrator | Show latest deployment status |
+| `cloud-soc ssm sessions` | SSMService | List active SSM sessions |
 | `cloud-soc status` | EC2Service | Check infrastructure status |
 | `cloud-soc validate` | TerraformRunner | Validate configuration |
 | `cloud-soc destroy` | TerraformRunner | Destroy infrastructure |

@@ -1,5 +1,6 @@
 """Main CLI entry point using Typer"""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 import typer
@@ -11,6 +12,7 @@ from rich.text import Text
 from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
+from cloudsoc.aws.ssm import SSMService
 from cloudsoc.orchestrator import (
     TerraformOrchestrator,
     DeploymentOrchestrator,
@@ -21,6 +23,8 @@ from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
 dashboard_app = typer.Typer(invoke_without_command=True)
+deployment_app = typer.Typer()
+ssm_app = typer.Typer()
 console = Console()
 
 
@@ -291,7 +295,129 @@ def dashboard_status() -> None:
         raise typer.Exit(code=1)
 
 
+@deployment_app.command("status")
+def deployment_status_command() -> None:
+    """Show the latest deployment status."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Deployment Status[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        deployment_orchestrator = DeploymentOrchestrator()
+        status_data = deployment_orchestrator.get_deployment_status()
+
+        if status_data.get("status") == "No deployment history recorded":
+            console.print(Panel("[bold yellow]No deployment history found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        deployment_table = Table(show_header=True, header_style="bold magenta")
+        deployment_table.add_column("Target")
+        deployment_table.add_column("Status")
+        deployment_table.add_column("Started")
+        deployment_table.add_column("Finished")
+        deployment_table.add_column("Error")
+
+        def format_timestamp(value: Optional[float]) -> str:
+            if not value:
+                return "-"
+            try:
+                return datetime.utcfromtimestamp(value).isoformat() + "Z"
+            except Exception:
+                return str(value)
+
+        for target_name, target_data in status_data.get("targets", {}).items():
+            deployment_table.add_row(
+                target_name,
+                str(target_data.get("status", "-")),
+                format_timestamp(target_data.get("started_at")),
+                format_timestamp(target_data.get("finished_at")),
+                str(target_data.get("error", "")) or "-",
+            )
+
+        console.print(deployment_table)
+        console.print(
+            Panel(
+                f"Last deployment status: [bold]{status_data.get('status')}[/bold]\n"
+                f"Started: [bold]{format_timestamp(status_data.get('started_at'))}[/bold]\n"
+                f"Finished: [bold]{format_timestamp(status_data.get('finished_at'))}[/bold]\n"
+                f"State file: [bold]{deployment_orchestrator.deployment_state_file}[/bold]",
+                expand=False,
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@ssm_app.command("sessions")
+def ssm_sessions() -> None:
+    """List active SSM sessions and instance health."""
+    settings = get_settings()
+
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]SSM Sessions[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        ssm_service = SSMService(
+            region=settings.project.aws.region,
+            profile=settings.project.aws.profile
+        )
+
+        sessions = ssm_service.list_active_sessions()
+        if not sessions:
+            console.print(Panel("[bold yellow]No active SSM sessions found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        instance_ids = [session.get("Target") for session in sessions if session.get("Target")]
+        health_map = ssm_service.get_instance_health(instance_ids)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Session ID")
+        table.add_column("Target")
+        table.add_column("Status")
+        table.add_column("Document")
+        table.add_column("Owner")
+        table.add_column("Started At")
+        table.add_column("Agent Health")
+
+        for session in sessions:
+            target = session.get("Target", "-")
+            health_info = health_map.get(target, {})
+            agent_health = health_info.get("PingStatus", "-")
+            started_at = session.get("StartDate")
+            if started_at:
+                started_at = str(started_at)
+
+            table.add_row(
+                str(session.get("SessionId", "-")),
+                target,
+                str(session.get("Status", "-")),
+                str(session.get("DocumentName", "-")),
+                str(session.get("Owner", "-")),
+                started_at or "-",
+                agent_health,
+            )
+
+        console.print(table)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
 app.add_typer(dashboard_app, name="dashboard")
+app.add_typer(deployment_app, name="deployment")
+app.add_typer(ssm_app, name="ssm")
 
 
 @app.command("import")

@@ -30,6 +30,12 @@ sleep 30
 # Stage 2: Deployment (SSM + YAML playbooks)
 cloud-soc deploy
 
+# Check deployment progress
+cloud-soc deployment status
+
+# Inspect active SSM sessions
+cloud-soc ssm sessions
+
 # Access dashboard
 cloud-soc dashboard
 ```
