@@ -52,6 +52,12 @@ tasks:
       - /opt/wazuh/config/wazuh_indexer_ssl_certs
     mode: '0755'
 
+  - name: Enable Docker service
+    type: service
+    name: docker
+    state: started
+    enabled: true
+
   - name: Download docker-compose.yml from S3
     type: download
     source: s3://{{ s3_bucket_name }}/{{ s3_prefix }}/docker-compose.yml
@@ -117,3 +123,12 @@ tasks:
     operation: compose_up
     cwd: /opt/wazuh
     compose_file: docker-compose.yml
+
+  - name: Verify Wazuh services are running
+    type: shell
+    cmd: |
+      cd /opt/wazuh
+      docker compose ps
+      echo "Waiting for services to stabilize..."
+      sleep 5
+      docker compose logs --tail 20 wazuh.manager | tail -10

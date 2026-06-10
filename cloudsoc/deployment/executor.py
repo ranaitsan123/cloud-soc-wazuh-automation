@@ -49,7 +49,12 @@ class DeploymentTask:
     def to_shell_commands(self, variables: Dict[str, Any]) -> List[str]:
         """Render the task as shell commands for remote execution."""
         if self.task_type == "shell":
-            return [self._substitute_vars(self.config.get("cmd", ""), variables)]
+            cmd = self._substitute_vars(self.config.get("cmd", ""), variables)
+            skip_if_exists = self.config.get("skip_if_exists")
+            if skip_if_exists:
+                skip_path = self._substitute_vars(str(skip_if_exists), variables)
+                cmd = f"[ -f {skip_path} ] || {cmd}"
+            return [cmd]
         if self.task_type == "command":
             cmd = self.config.get("cmd")
             if isinstance(cmd, list):
@@ -86,9 +91,15 @@ class DeploymentTask:
         if self.task_type == "download":
             source = self._substitute_vars(str(self.config.get("source", "")), variables)
             dest = self._substitute_vars(str(self.config.get("dest", "")), variables)
+            skip_if_exists = self.config.get("skip_if_exists")
             if source.startswith("s3://"):
-                return [f"python3 -m awscli s3 cp {source} {dest}"]
-            return [f"curl -fsSL -o {dest} {source}"]
+                cmd = f"aws s3 cp {source} {dest}"
+            else:
+                cmd = f"curl -fsSL -o {dest} {source}"
+            if skip_if_exists:
+                skip_path = self._substitute_vars(str(skip_if_exists), variables)
+                cmd = f"[ -f {skip_path} ] || {cmd}"
+            return [cmd]
         if self.task_type == "file":
             action = self.config.get("action", "create")
             path = self._substitute_vars(str(self.config.get("path", "")), variables)

@@ -41,6 +41,12 @@ tasks:
       - containerd.io
       - docker-compose-plugin
 
+  - name: Enable Docker service
+    type: service
+    name: docker
+    state: started
+    enabled: true
+
   - name: Install Wazuh repository GPG key
     type: shell
     cmd: curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --dearmour -o /usr/share/keyrings/wazuh.gpg
@@ -74,8 +80,10 @@ tasks:
   - name: Configure Wazuh agent manager connection
     type: shell
     cmd: |
-      sudo sed -i '/<manager>/,/<\/manager>/c\      <manager>\n        <address>{{ wazuh_manager_ip }}</address>\n      </manager>' /var/ossec/etc/ossec.conf
-      sudo systemctl restart wazuh-agent
+      if ! grep -q "<address>{{ wazuh_manager_ip }}</address>" /var/ossec/etc/ossec.conf; then
+        sudo sed -i "s|<address>.*</address>|<address>{{ wazuh_manager_ip }}</address>|g" /var/ossec/etc/ossec.conf
+        sudo systemctl restart wazuh-agent
+      fi
 
   - name: Login to ECR
     type: shell
@@ -89,9 +97,22 @@ tasks:
   - name: Start victim container
     type: shell
     cmd: |
+      docker rm -f victim-art 2>/dev/null || true
       docker run -d \
         --name victim-art \
         --restart always \
         -v /opt/fortress:/opt/fortress \
         {{ ecr_victim_repository_url }}:latest \
         tail -f /dev/null
+
+  - name: Verify victim container is running
+    type: shell
+    cmd: |
+      docker ps --filter "name=victim-art"
+      docker exec victim-art ls -la /opt/fortress || echo "Warning: /opt/fortress not accessible"
+      
+  - name: Verify Wazuh agent is active
+    type: shell
+    cmd: |
+      sudo systemctl is-active wazuh-agent
+      sudo systemctl is-enabled wazuh-agent
