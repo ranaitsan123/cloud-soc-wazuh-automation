@@ -11,7 +11,13 @@ from botocore.exceptions import ClientError
 
 from cloudsoc.deployment.executor import DeploymentService
 from cloudsoc.aws.ssm import SSMService
-from cloudsoc.orchestrator import DashboardOrchestrator, OrchestrationError, SSMDashboardTunnelManager, TunnelSession
+from cloudsoc.orchestrator import (
+    BuildOrchestrator,
+    DashboardOrchestrator,
+    OrchestrationError,
+    SSMDashboardTunnelManager,
+    TunnelSession,
+)
 
 
 def test_ssm_wait_for_instance_online():
@@ -27,6 +33,47 @@ def test_ssm_wait_for_instance_online():
         ssm = SSMService(region="eu-north-1")
         assert ssm.wait_for_instance("i-123", timeout=1, poll_interval=0.01)
         mock_client.describe_instance_information.assert_called()
+
+
+def test_build_orchestrator_resolves_all_targets():
+    build_orchestrator = BuildOrchestrator()
+    assert build_orchestrator._resolve_build_targets(None) == ["victim"]
+    assert build_orchestrator._resolve_build_targets(["all"]) == ["victim"]
+
+
+def test_build_orchestrator_parses_workflow_run_id():
+    build_orchestrator = BuildOrchestrator()
+    output = "Created workflow run 1234567"
+    assert build_orchestrator._parse_workflow_run_id(output) == "1234567"
+
+
+def test_build_orchestrator_triggers_workflow_and_waits():
+    with patch("cloudsoc.orchestrator.run_command") as mock_run_command:
+        mock_run_command.side_effect = [
+            Mock(stdout="Created workflow run 1234", stderr="", returncode=0),
+            Mock(returncode=0),
+        ]
+        build_orchestrator = BuildOrchestrator()
+
+        build_orchestrator.build_targets(targets=["victim"], wait=True, ref="main")
+
+        assert mock_run_command.call_count == 2
+        assert mock_run_command.call_args_list[0][0][0] == ["gh", "workflow", "run", "build-victim-image.yml", "--ref", "main"]
+        assert mock_run_command.call_args_list[1][0][0] == ["gh", "run", "watch", "1234", "--exit-status"]
+
+
+def test_build_orchestrator_ensure_image_exists_raises_when_missing_images():
+    with patch("cloudsoc.orchestrator.ECRService") as mock_ecr_service_cls:
+        mock_ecr = Mock()
+        mock_ecr.get_repository.return_value = {"name": "cloud-soc-victim"}
+        mock_ecr.list_images.return_value = []
+        mock_ecr_service_cls.return_value = mock_ecr
+
+        build_orchestrator = BuildOrchestrator()
+        with pytest.raises(OrchestrationError) as exc:
+            build_orchestrator.ensure_image_exists("victim")
+
+        assert "No image found in ECR repository cloud-soc-victim" in str(exc.value)
 
 
 def test_ssm_wait_for_command_handles_pending_invocation(tmp_path):

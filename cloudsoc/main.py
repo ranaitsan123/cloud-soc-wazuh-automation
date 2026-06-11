@@ -15,6 +15,7 @@ from cloudsoc.aws.ec2 import EC2Service
 from cloudsoc.aws.ssm import SSMService
 from cloudsoc.orchestrator import (
     TerraformOrchestrator,
+    BuildOrchestrator,
     DeploymentOrchestrator,
     DashboardOrchestrator,
     OrchestrationError,
@@ -37,7 +38,6 @@ def setup(ctx: typer.Context) -> None:
     """Initialize settings and logging"""
     settings = get_settings()
 
-    # Configure logging
     setup_logger(
         name="cloud-soc",
         level=20 if settings.log_level == "INFO" else 10
@@ -106,6 +106,141 @@ def apply(
                 "[bold green]✓ Infrastructure provisioning complete![/bold green]\n\n"
                 "Next step: run [bold]cloud-soc deploy[/bold] to deploy services.\n"
                 "Or run [bold]cloud-soc status[/bold] to check infrastructure status.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
+
+    except (TerraformStateError, OrchestrationError) as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def build(
+    targets: Optional[List[str]] = typer.Argument(
+        None,
+        help="Build targets (e.g., victim). Use 'all' to build all supported images."
+    ),
+    wait: bool = typer.Option(
+        False,
+        "--wait",
+        help="Wait for the GitHub Actions workflow to complete."
+    ),
+    ref: Optional[str] = typer.Option(
+        None,
+        "--ref",
+        help="Git reference to use for triggering the workflow."
+    ),
+) -> None:
+    """Trigger GitHub Actions workflows to build container images."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Build Images[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        build_orchestrator = BuildOrchestrator()
+        build_orchestrator.build_targets(
+            targets=targets,
+            wait=wait,
+            ref=ref,
+        )
+    except OrchestrationError as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def up(
+    build_flag: bool = typer.Option(
+        False,
+        "--build",
+        help="Build required images before deployment."
+    ),
+    auto_approve: bool = typer.Option(
+        False,
+        "--auto-approve",
+        help="Automatically approve Terraform apply."
+    ),
+    skip_validation: bool = typer.Option(
+        False,
+        "--skip-validation",
+        help="Skip deployment validation"
+    ),
+) -> None:
+    """Provision infrastructure, deploy services, and validate the deployment."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Up[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        tf_orchestrator = TerraformOrchestrator()
+        logger.info("Starting Terraform infrastructure deployment...")
+
+        tf_orchestrator.init()
+        logger.info("[INIT] Terraform initialized")
+
+        tf_orchestrator.import_all_existing_resources()
+        logger.info("[IMPORT] Resources imported")
+
+        tf_orchestrator.validate()
+        logger.info("[VALIDATE] Configuration valid")
+
+        plan_file = tf_orchestrator.plan()
+        logger.info("[PLAN] Infrastructure plan generated")
+
+        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
+        logger.info("[APPLY] Infrastructure deployed successfully")
+
+        if build_flag:
+            build_orchestrator = BuildOrchestrator()
+            build_orchestrator.build_targets(wait=True)
+
+        deployment_orchestrator = DeploymentOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found after apply."
+            )
+
+        logger.info("Waiting for SSM agent readiness...")
+        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
+        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
+        instance_ids = [id for id in [wazuh_id, victim_id] if id]
+
+        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
+        logger.info("[SSM] All instances connected")
+
+        logger.info("Starting service deployments...")
+        deployment_orchestrator.deploy_targets(
+            terraform_outputs,
+            targets=None,
+            skip_validation=skip_validation,
+        )
+
+        if not skip_validation:
+            logger.info("Validating deployment...")
+            deployment_orchestrator.validate_deployment(terraform_outputs)
+
+        console.print(
+            Panel(
+                "[bold green]✓ Cloud SOC stack is up![/bold green]\n\n"
+                "Run [bold]cloud-soc dashboard[/bold] to open the Wazuh dashboard.",
                 title="Cloud SOC",
                 expand=False,
             )
@@ -527,13 +662,11 @@ def status() -> None:
     )
 
     try:
-        # Get AWS resources
         ec2_service = EC2Service(
             region=settings.project.aws.region,
             profile=settings.project.aws.profile
         )
 
-        # Find VPC
         vpc = ec2_service.find_vpc(project_tag=settings.project.tag)
 
         if vpc:
@@ -541,7 +674,6 @@ def status() -> None:
             console.print(f"  CIDR: {vpc.cidr_block}")
             console.print(f"  State: {vpc.state}")
 
-            # Find subnets
             subnets = ec2_service.find_subnets(vpc.id)
             if subnets:
                 console.print(f"\n[bold]Subnets ({len(subnets)}):[/bold]")
@@ -556,7 +688,6 @@ def status() -> None:
 
                 console.print(table)
 
-            # Find instances
             instances = ec2_service.find_instances(vpc_id=vpc.id, project_tag=settings.project.tag)
             if instances:
                 console.print(f"\n[bold]Instances ({len(instances)}):[/bold]")
@@ -606,3 +737,4 @@ def version() -> None:
 # Create __init__.py for package
 if __name__ == "__main__":
     app()
+ 
