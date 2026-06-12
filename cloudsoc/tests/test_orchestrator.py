@@ -62,6 +62,23 @@ def test_build_orchestrator_triggers_workflow_and_waits():
         assert mock_run_command.call_args_list[1][0][0] == ["gh", "run", "watch", "1234", "--exit-status"]
 
 
+def test_build_orchestrator_uses_current_branch_when_ref_is_not_specified():
+    with patch("cloudsoc.orchestrator.run_command") as mock_run_command:
+        mock_run_command.side_effect = [
+            Mock(stdout="feature/build-deployment-workflow\n", stderr="", returncode=0),
+            Mock(stdout="Created workflow run 1234", stderr="", returncode=0),
+            Mock(returncode=0),
+        ]
+        build_orchestrator = BuildOrchestrator()
+
+        build_orchestrator.build_targets(targets=["victim"], wait=True, ref=None)
+
+        assert mock_run_command.call_count == 3
+        assert mock_run_command.call_args_list[0][0][0] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]
+        assert mock_run_command.call_args_list[1][0][0] == ["gh", "workflow", "run", "build-victim-image.yml", "--ref", "feature/build-deployment-workflow"]
+        assert mock_run_command.call_args_list[2][0][0] == ["gh", "run", "watch", "1234", "--exit-status"]
+
+
 def test_build_orchestrator_ensure_image_exists_raises_when_missing_images():
     with patch("cloudsoc.orchestrator.ECRService") as mock_ecr_service_cls:
         mock_ecr = Mock()

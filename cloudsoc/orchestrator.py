@@ -417,9 +417,14 @@ class BuildOrchestrator:
             )
         )
 
-        command = ["gh", "workflow", "run", workflow_file]
-        if ref:
-            command.extend(["--ref", ref])
+        command = [
+            "gh",
+            "workflow",
+            "run",
+            workflow_file,
+            "--ref",
+            ref or self._get_current_branch(),
+        ]
 
         try:
             result = run_command(command, capture_output=True)
@@ -460,6 +465,23 @@ class BuildOrchestrator:
             )
 
         return match.group(1)
+
+    def _get_current_branch(self) -> str:
+        try:
+            result = run_command(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+            )
+            branch = (result.stdout or "").strip()
+            if not branch or branch == "HEAD":
+                raise OrchestrationError(
+                    "Unable to determine current git branch for workflow ref."
+                )
+            return branch
+        except ShellCommandError as e:
+            raise OrchestrationError(
+                f"Unable to determine current git branch: {e}"
+            ) from e
 
 
 class DeploymentOrchestrator:
