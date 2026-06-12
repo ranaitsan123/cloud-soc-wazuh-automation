@@ -21,4 +21,7 @@ if command -v gh >/dev/null 2>&1; then
     fi
 fi
 
+# Avoid 'dubious ownership' git error for mounted workspace
+git config --global --add safe.directory /workspace 2>/dev/null || true
+
 exec "$@"
