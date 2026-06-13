@@ -65,12 +65,6 @@ tasks:
     packages:
       - wazuh-agent
 
-  - name: Enable Wazuh agent service
-    type: service
-    name: wazuh-agent
-    state: started
-    enabled: true
-
   - name: Create /opt/fortress directory
     type: directory
     paths:
@@ -80,10 +74,18 @@ tasks:
   - name: Configure Wazuh agent manager connection
     type: shell
     cmd: |
-      if ! grep -q "<address>{{ wazuh_manager_ip }}</address>" /var/ossec/etc/ossec.conf; then
-        sudo sed -i "s|<address>.*</address>|<address>{{ wazuh_manager_ip }}</address>|g" /var/ossec/etc/ossec.conf
-        sudo systemctl restart wazuh-agent
+      if [ "{{ wazuh_manager_ip }}" = "" ]; then
+        echo "wazuh_manager_ip not provided"
+        exit 1
       fi
+
+      sudo sed -i 's|MANAGER_IP|{{ wazuh_manager_ip }}|g' /var/ossec/etc/ossec.conf
+
+  - name: Enable Wazuh agent service
+    type: service
+    name: wazuh-agent
+    state: started
+    enabled: true
 
   - name: Login to ECR
     type: shell

@@ -451,6 +451,7 @@ def deployment_status_command() -> None:
         deployment_table = Table(show_header=True, header_style="bold magenta")
         deployment_table.add_column("Target")
         deployment_table.add_column("Status")
+        deployment_table.add_column("Current Task")
         deployment_table.add_column("Started")
         deployment_table.add_column("Finished")
         deployment_table.add_column("Error")
@@ -467,6 +468,7 @@ def deployment_status_command() -> None:
             deployment_table.add_row(
                 target_name,
                 str(target_data.get("status", "-")),
+                str(target_data.get("current_task") or "-"),
                 format_timestamp(target_data.get("started_at")),
                 format_timestamp(target_data.get("finished_at")),
                 str(target_data.get("error", "")) or "-",
@@ -479,6 +481,55 @@ def deployment_status_command() -> None:
                 f"Started: [bold]{format_timestamp(status_data.get('started_at'))}[/bold]\n"
                 f"Finished: [bold]{format_timestamp(status_data.get('finished_at'))}[/bold]\n"
                 f"State file: [bold]{deployment_orchestrator.deployment_state_file}[/bold]",
+                expand=False,
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@deployment_app.command("logs")
+def deployment_logs_command(
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-n",
+        help="Maximum number of logs to display",
+    ),
+) -> None:
+    """List saved deployment failure logs."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Deployment Logs[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        deployment_orchestrator = DeploymentOrchestrator()
+        log_files = deployment_orchestrator.list_deployment_logs(limit=limit)
+
+        if not log_files:
+            console.print(Panel("[bold yellow]No deployment logs found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Log File")
+        table.add_column("Modified")
+        table.add_column("Size")
+
+        for log_file in log_files:
+            modified = datetime.utcfromtimestamp(log_file.stat().st_mtime).isoformat() + "Z"
+            size = str(log_file.stat().st_size)
+            table.add_row(log_file.name, modified, size)
+
+        console.print(table)
+        console.print(
+            Panel(
+                f"Logs directory: [bold]{deployment_orchestrator.deployment_logs_dir()}[/bold]",
                 expand=False,
             )
         )

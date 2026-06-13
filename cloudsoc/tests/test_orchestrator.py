@@ -14,6 +14,7 @@ from cloudsoc.aws.ssm import SSMService
 from cloudsoc.orchestrator import (
     BuildOrchestrator,
     DashboardOrchestrator,
+    DeploymentOrchestrator,
     OrchestrationError,
     SSMDashboardTunnelManager,
     TunnelSession,
@@ -209,6 +210,81 @@ def test_deployment_service_reports_remote_failure_details(tmp_path):
 
     assert result is False
     assert "status=Failed" in deployment_service.last_error
+
+
+def test_deployment_service_clears_previous_errors(tmp_path):
+    deployment_dir = tmp_path / "deployments"
+    deployment_dir.mkdir()
+
+    deployment_yaml = {
+        "name": "test_deployment",
+        "description": "Test deployment",
+        "tasks": [
+            {
+                "name": "Success task",
+                "type": "shell",
+                "cmd": "echo 'ok'"
+            }
+        ]
+    }
+
+    deployment_file = deployment_dir / "test_deploy.yml"
+    with open(deployment_file, "w") as f:
+        yaml.dump(deployment_yaml, f)
+
+    deployment_service = DeploymentService(deployment_dir=deployment_dir)
+    deployment_service.last_error = "previous failure"
+    deployment_service.last_error_detail = "previous detail"
+
+    with patch("cloudsoc.deployment.executor.run_command") as mock_run:
+        mock_run.return_value = None
+        result = deployment_service.run_deployment("test_deploy", variables={})
+
+    assert result is True
+    assert deployment_service.last_error == ""
+    assert deployment_service.last_error_detail == ""
+
+
+def test_deployment_orchestrator_saves_failure_log_and_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    mock_deployment_service = Mock()
+    mock_deployment_service.run_deployment.return_value = False
+    mock_deployment_service.last_error = "Deployment failed"
+    mock_deployment_service.last_error_detail = "Detailed remote failure output"
+
+    with patch("cloudsoc.orchestrator.DeploymentService", return_value=mock_deployment_service), \
+         patch("cloudsoc.orchestrator.ECRService") as mock_ecr_service_cls, \
+         patch("cloudsoc.orchestrator.SSMService") as mock_ssm_service_cls:
+        mock_ecr = Mock()
+        mock_ecr_service_cls.return_value = mock_ecr
+        mock_ssm_service_cls.return_value = Mock()
+        deployment_orchestrator = DeploymentOrchestrator(settings=mock_settings)
+
+        terraform_outputs = {
+            "victim_instance_id": {"value": "i-123"},
+            "ecr_victim_repository_url": {"value": "https://example.com/repo"},
+            "wazuh_instance_private_ip": {"value": "10.0.0.10"},
+        }
+
+        with pytest.raises(OrchestrationError) as exc:
+            deployment_orchestrator.deploy_targets(terraform_outputs, targets=["victim"])
+
+        assert "Detailed log saved to" in str(exc.value)
+
+        log_files = list((tmp_path / ".cloud-soc" / "logs").glob("*.log"))
+        assert len(log_files) == 1
+        log_content = log_files[0].read_text()
+        assert "Detailed remote failure output" in log_content
+
+        state = json.loads((tmp_path / ".cloud-soc" / "deployment_state.json").read_text())
+        target_state = state["last_deployment"]["targets"]["victim_server"]
+        assert target_state["status"] == "failed"
+        assert target_state["error_detail"] == "Detailed remote failure output"
 
 
 def test_deployment_service_runs_tasks(tmp_path):

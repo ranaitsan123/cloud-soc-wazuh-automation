@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 import yaml
 
@@ -381,15 +381,21 @@ class DeploymentPlan:
         variables: Optional[Dict[str, Any]] = None,
         ssm_service: Optional[SSMService] = None,
         instance_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Execute all tasks in the plan either locally or remotely via SSM."""
         variables = variables or {}
+        self.error_message = ""
+        self.raw_error = ""
         logger.info(f"Starting deployment: {self.name}")
 
         if ssm_service and instance_ids:
-            return self._execute_remote(variables, ssm_service, instance_ids)
+            return self._execute_remote(variables, ssm_service, instance_ids, progress_callback)
 
         for task in self.tasks:
+            if progress_callback:
+                progress_callback(task.name)
+
             if not task.execute(variables):
                 self.error_message = f"Deployment failed at task: {task.name}"
                 logger.error(self.error_message)
@@ -402,12 +408,16 @@ class DeploymentPlan:
         self,
         variables: Dict[str, Any],
         ssm_service: SSMService,
-        instance_ids: List[str]
+        instance_ids: List[str],
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Execute the deployment remotely via SSM."""
         commands: List[str] = ["set -e"]
 
         for task in self.tasks:
+            if progress_callback:
+                progress_callback(task.name)
+
             try:
                 task_commands = task.to_shell_commands(variables)
             except Exception as e:
@@ -417,8 +427,10 @@ class DeploymentPlan:
             if not task_commands:
                 continue
 
-            commands.append(f"echo 'Running task: {task.name}'")
+            task_name_escaped = task.name.replace('"', '\\"')
+            commands.append(f'printf "%s\\n" "=== START TASK: {task_name_escaped} ==="')
             commands.extend(task_commands)
+            commands.append(f'printf "%s\\n" "=== END TASK: {task_name_escaped} ==="')
 
         script = "\n".join(commands)
         command_id = ssm_service.send_command(
@@ -481,6 +493,7 @@ class DeploymentService:
         variables: Optional[Dict[str, Any]] = None,
         ssm_service: Optional[SSMService] = None,
         instance_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """
         Run a deployment from a YAML file.
@@ -495,6 +508,9 @@ class DeploymentService:
             True if successful
         """
         deployment_path = self.deployment_dir / f"{deployment_name}.yml"
+
+        self.last_error = ""
+        self.last_error_detail = ""
 
         if not deployment_path.exists():
             self.last_error = f"Deployment file not found: {deployment_path}"
@@ -515,6 +531,7 @@ class DeploymentService:
                 variables=variables or {},
                 ssm_service=ssm_service,
                 instance_ids=instance_ids,
+                progress_callback=progress_callback,
             )
 
             if not success:

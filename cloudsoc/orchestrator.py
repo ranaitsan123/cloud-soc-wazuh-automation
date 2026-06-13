@@ -6,6 +6,7 @@ Provides separation of concerns:
 - DashboardOrchestrator: Manages dashboard tunneling and access
 """
 
+import functools
 import json
 import os
 import re
@@ -538,7 +539,9 @@ class DeploymentOrchestrator:
                         "status": "pending",
                         "started_at": None,
                         "finished_at": None,
+                        "current_task": None,
                         "error": "",
+                        "error_detail": "",
                     }
                     for name in deployment_names
                 },
@@ -547,7 +550,7 @@ class DeploymentOrchestrator:
         self._save_deployment_state(state)
         return state
 
-    def _update_target_state(self, state: dict, deployment_name: str, status: str, error: str = "") -> None:
+    def _update_target_state(self, state: dict, deployment_name: str, status: str, error: str = "", error_detail: str = "") -> None:
         target_state = state["last_deployment"]["targets"].get(deployment_name)
         if not target_state:
             return
@@ -558,6 +561,17 @@ class DeploymentOrchestrator:
         target_state["finished_at"] = now if status in {"success", "failed"} else None
         target_state["status"] = status
         target_state["error"] = error
+        target_state["error_detail"] = error_detail
+        if status in {"success", "failed"}:
+            target_state["current_task"] = None
+        self._save_deployment_state(state)
+
+    def _update_target_progress(self, state: dict, deployment_name: str, current_task: str) -> None:
+        target_state = state["last_deployment"]["targets"].get(deployment_name)
+        if not target_state:
+            return
+
+        target_state["current_task"] = current_task
         self._save_deployment_state(state)
 
     def get_deployment_status(self) -> dict[str, object]:
@@ -593,6 +607,38 @@ class DeploymentOrchestrator:
         for instance_id in instance_ids:
             if not self.ssm_service.wait_for_instance(instance_id, timeout=timeout, poll_interval=poll_interval):
                 raise OrchestrationError(f"SSM agent did not become ready for instance {instance_id}")
+
+    def deployment_logs_dir(self) -> Path:
+        state_dir = Path.home() / ".cloud-soc"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir = state_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        return logs_dir
+
+    def _save_deployment_log(self, deployment_name: str, instance_id: str, error_detail: str) -> Path:
+        timestamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
+        log_filename = self.deployment_logs_dir() / f"deployment-{deployment_name}-{instance_id}-{timestamp}.log"
+        log_contents = (
+            f"Deployment: {deployment_name}\n"
+            f"Instance: {instance_id}\n"
+            f"Timestamp: {timestamp}Z\n"
+            f"\n"
+            f"Error:\n{error_detail}\n"
+        )
+        log_filename.write_text(log_contents)
+        return log_filename
+
+    def list_deployment_logs(self, limit: Optional[int] = None) -> List[Path]:
+        logs_dir = self.deployment_logs_dir()
+        if not logs_dir.exists():
+            return []
+
+        log_files = sorted(
+            logs_dir.glob("deployment-*.log"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        return log_files[:limit] if limit else log_files
 
     def deploy_targets(
         self,
@@ -671,16 +717,25 @@ class DeploymentOrchestrator:
                     variables=variables,
                     ssm_service=self.ssm_service,
                     instance_ids=[instance_id],
+                    progress_callback=functools.partial(self._update_target_progress, state, deployment_name),
                 )
 
                 if success:
                     self._update_target_state(state, deployment_name, "success")
                     continue
 
-                error_detail = self.deployment_service.last_error or "See logs for details."
-                self._update_target_state(state, deployment_name, "failed", error=error_detail)
+                error_detail = self.deployment_service.last_error_detail or self.deployment_service.last_error or "See logs for details."
+                self._update_target_state(
+                    state,
+                    deployment_name,
+                    "failed",
+                    error=self.deployment_service.last_error or "Deployment failed",
+                    error_detail=error_detail,
+                )
+                log_file = self._save_deployment_log(deployment_name, instance_id, error_detail)
                 raise OrchestrationError(
-                    f"Deployment to {deployment_name} failed: {error_detail}"
+                    f"Deployment to {deployment_name} failed: {self.deployment_service.last_error or 'Deployment failed'}\n"
+                    f"Detailed log saved to {log_file}"
                 )
         except OrchestrationError:
             state["last_deployment"]["finished_at"] = time.time()
