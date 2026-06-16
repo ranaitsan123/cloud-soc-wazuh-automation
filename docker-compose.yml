@@ -20,7 +20,6 @@ services:
 
     working_dir: /workspace
 
-    ports:
-      - "8443:8443"
+    network_mode: "host"
 
     tty: true
