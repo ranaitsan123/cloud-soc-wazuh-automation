@@ -362,7 +362,7 @@ def test_dashboard_open_tunnel_expose_does_not_send_local_address(tmp_path, monk
         command = mock_popen.call_args[0][0]
         assert "AWS-StartPortForwardingSession" in command
         params = json.loads(command[-1])
-        assert "localAddress" not in params
+        assert params["localAddress"] == ["0.0.0.0"]
         assert params["localPortNumber"] == ["9443"]
 
 

@@ -48,6 +48,7 @@ class TunnelSession:
     remote_port: int
     process: Optional[subprocess.Popen]
     started_at: float
+    local_address: str = "127.0.0.1"
     pid: Optional[int] = None
 
     def to_dict(self) -> dict:
@@ -56,6 +57,7 @@ class TunnelSession:
             "session_id": self.session_id,
             "local_port": self.local_port,
             "remote_port": self.remote_port,
+            "local_address": self.local_address,
             "pid": self.pid,
             "started_at": self.started_at,
         }
@@ -68,6 +70,7 @@ class TunnelSession:
             local_port=data["local_port"],
             remote_port=data["remote_port"],
             process=None,
+            local_address=data.get("local_address", "127.0.0.1"),
             pid=data["pid"],
             started_at=data["started_at"],
         )
@@ -128,14 +131,27 @@ class SSMDashboardTunnelManager:
 
     def _free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
+            sock.bind(("0.0.0.0", 0))
             return sock.getsockname()[1]
 
-    def start(self, instance_id: str, local_port: int, remote_port: int) -> TunnelSession:
+    def start(
+        self,
+        instance_id: str,
+        local_port: int,
+        remote_port: int,
+        local_address: str = "127.0.0.1",
+    ) -> TunnelSession:
         self._kill_existing()
 
         if local_port <= 0:
             local_port = self._free_port()
+
+        parameters = {
+            "portNumber": [str(remote_port)],
+            "localPortNumber": [str(local_port)],
+        }
+        if local_address and local_address != "127.0.0.1":
+            parameters["localAddress"] = [local_address]
 
         command = [
             "aws",
@@ -146,10 +162,7 @@ class SSMDashboardTunnelManager:
             "--document-name",
             "AWS-StartPortForwardingSession",
             "--parameters",
-            json.dumps({
-                "portNumber": [str(remote_port)],
-                "localPortNumber": [str(local_port)],
-            }),
+            json.dumps(parameters),
         ]
 
         process = subprocess.Popen(command)
@@ -164,6 +177,7 @@ class SSMDashboardTunnelManager:
             local_port=local_port,
             remote_port=remote_port,
             process=process,
+            local_address=local_address,
             pid=pid,
             started_at=time.time(),
         )
@@ -854,7 +868,13 @@ class DashboardOrchestrator:
         )
 
         try:
-            session = self.tunnel_manager.start(instance_id, local_port, remote_port)
+            tunnel_address = "0.0.0.0" if expose else "127.0.0.1"
+            session = self.tunnel_manager.start(
+                instance_id,
+                local_port,
+                remote_port,
+                local_address=tunnel_address,
+            )
             self.tunnel_manager.validate_tls(timeout=10)
             session.process.wait()
         except KeyboardInterrupt:
