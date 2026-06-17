@@ -13,12 +13,12 @@ from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
 from cloudsoc.aws.ssm import SSMService
-from cloudsoc.orchestrator import (
-    TerraformOrchestrator,
+from cloudsoc.orchestration import (
     BuildOrchestrator,
-    DeploymentOrchestrator,
     DashboardOrchestrator,
+    DeploymentOrchestrator,
     OrchestrationError,
+    PlatformOrchestrator,
 )
 from cloudsoc.utils.logger import logger, setup_logger
 
@@ -82,23 +82,13 @@ def apply(
     )
 
     try:
-        tf_orchestrator = TerraformOrchestrator()
+        platform_orchestrator = PlatformOrchestrator()
         logger.info("Starting Terraform infrastructure deployment...")
 
-        tf_orchestrator.init()
-        logger.info("[INIT] Terraform initialized")
-
-        tf_orchestrator.import_all_existing_resources()
-        logger.info("[IMPORT] Resources imported")
-
-        tf_orchestrator.validate()
-        logger.info("[VALIDATE] Configuration valid")
-
-        var_file_list = [var_files] if var_files else []
-        plan_file = tf_orchestrator.plan(var_files=var_file_list)
-        logger.info("[PLAN] Infrastructure plan generated")
-
-        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
+        platform_orchestrator.apply(
+            auto_approve=auto_approve,
+            var_files=[var_files] if var_files else None,
+        )
         logger.info("[APPLY] Infrastructure deployed successfully")
 
         console.print(
@@ -188,54 +178,14 @@ def up(
     )
 
     try:
-        tf_orchestrator = TerraformOrchestrator()
-        logger.info("Starting Terraform infrastructure deployment...")
+        platform_orchestrator = PlatformOrchestrator()
+        logger.info("Starting Cloud SOC stack deployment...")
 
-        tf_orchestrator.init()
-        logger.info("[INIT] Terraform initialized")
-
-        tf_orchestrator.import_all_existing_resources()
-        logger.info("[IMPORT] Resources imported")
-
-        tf_orchestrator.validate()
-        logger.info("[VALIDATE] Configuration valid")
-
-        plan_file = tf_orchestrator.plan()
-        logger.info("[PLAN] Infrastructure plan generated")
-
-        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
-        logger.info("[APPLY] Infrastructure deployed successfully")
-
-        if build_flag:
-            build_orchestrator = BuildOrchestrator()
-            build_orchestrator.build_targets(wait=True)
-
-        deployment_orchestrator = DeploymentOrchestrator()
-        terraform_outputs = tf_orchestrator.output()
-
-        if not terraform_outputs:
-            raise OrchestrationError(
-                "No Terraform outputs found after apply."
-            )
-
-        logger.info("Waiting for SSM agent readiness...")
-        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
-        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
-        instance_ids = [id for id in [wazuh_id, victim_id] if id]
-
-        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
-        logger.info("[SSM] All instances connected")
-
-        logger.info("Starting service deployments...")
-        deployment_orchestrator.deploy_targets(
-            terraform_outputs,
-            targets=None,
+        platform_orchestrator.up(
+            build_flag=build_flag,
+            auto_approve=auto_approve,
             skip_validation=skip_validation,
         )
-
-        if not skip_validation:
-            logger.info("Validating deployment...")
-            deployment_orchestrator.validate_deployment(terraform_outputs)
 
         console.print(
             Panel(
@@ -290,37 +240,11 @@ def deploy(
     )
 
     try:
-        tf_orchestrator = TerraformOrchestrator()
-        terraform_outputs = tf_orchestrator.output()
-
-        if not terraform_outputs:
-            raise OrchestrationError(
-                "No Terraform outputs found. Run 'cloud-soc apply' first."
-            )
-
-        deployment_orchestrator = DeploymentOrchestrator()
-
-        # Targets is already a list from Typer
-        target_list = targets
-
-        logger.info("Waiting for SSM agent readiness...")
-        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
-        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
-        instance_ids = [id for id in [wazuh_id, victim_id] if id]
-
-        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
-        logger.info("[SSM] All instances connected")
-
-        logger.info("Starting service deployments...")
-        deployment_orchestrator.deploy_targets(
-            terraform_outputs,
-            targets=target_list,
-            skip_validation=skip_validation
+        platform_orchestrator = PlatformOrchestrator()
+        platform_orchestrator.deploy(
+            targets=targets,
+            skip_validation=skip_validation,
         )
-
-        if not skip_validation:
-            logger.info("Validating deployment...")
-            deployment_orchestrator.validate_deployment(terraform_outputs)
 
         console.print(
             Panel(
@@ -371,17 +295,8 @@ def dashboard(
     )
 
     try:
-        tf_orchestrator = TerraformOrchestrator()
-        terraform_outputs = tf_orchestrator.output()
-
-        if not terraform_outputs:
-            raise OrchestrationError(
-                "No Terraform outputs found. Run 'cloud-soc apply' first."
-            )
-
-        dashboard_orchestrator = DashboardOrchestrator()
-        dashboard_orchestrator.open_tunnel(
-            terraform_outputs,
+        platform_orchestrator = PlatformOrchestrator()
+        platform_orchestrator.open_dashboard_tunnel(
             local_port=local_port,
             remote_port=remote_port,
             expose=expose,
