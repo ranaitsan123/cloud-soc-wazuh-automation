@@ -14,13 +14,15 @@ tasks:
       - curl
       - software-properties-common
       - git
-      - awscli
       - python3
       - python3-pip
+      - python3-boto3
+      - awscli
+      - gnupg
 
   - name: Install Docker GPG key
     type: shell
-    cmd: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /usr/share/keyrings/docker-archive-keyring.gpg
+    cmd: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
     skip_if_exists: /usr/share/keyrings/docker-archive-keyring.gpg
 
   - name: Add Docker apt repository
@@ -39,10 +41,6 @@ tasks:
       - containerd.io
       - docker-compose-plugin
 
-  - name: Install boto3 Python module
-    type: shell
-    cmd: sudo pip3 install boto3
-
   - name: Create Wazuh directories
     type: directory
     paths:
@@ -53,6 +51,12 @@ tasks:
       - /opt/wazuh/config/wazuh_dashboard
       - /opt/wazuh/config/wazuh_indexer_ssl_certs
     mode: '0755'
+
+  - name: Enable Docker service
+    type: service
+    name: docker
+    state: started
+    enabled: true
 
   - name: Download docker-compose.yml from S3
     type: download
@@ -119,3 +123,12 @@ tasks:
     operation: compose_up
     cwd: /opt/wazuh
     compose_file: docker-compose.yml
+
+  - name: Verify Wazuh services are running
+    type: shell
+    cmd: |
+      cd /opt/wazuh
+      docker compose ps
+      echo "Waiting for services to stabilize..."
+      sleep 5
+      docker compose logs --tail 20 wazuh.manager | tail -10

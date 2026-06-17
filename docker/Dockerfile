@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     jq \
     docker.io \
+    ca-certificates \
+    apt-transport-https \
+    gnupg \
+    lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade packaging tools
@@ -32,6 +36,13 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
 RUN curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o session-manager-plugin.deb \
     && dpkg -i session-manager-plugin.deb \
     && rm session-manager-plugin.deb
+
+# GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
 
 # uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh

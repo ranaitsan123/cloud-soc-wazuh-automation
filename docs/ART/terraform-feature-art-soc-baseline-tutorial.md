@@ -175,8 +175,8 @@ From your Codespace terminal:
 ```bash
 cd /workspaces/cloud-soc-wazuh-automation
 aws ssm start-session --target $(terraform -chdir=terraform output -raw wazuh_instance_id) \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters '{"host":["127.0.0.1"],"portNumber":["443"],"localPortNumber":["8443"]}'
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["443"],"localPortNumber":["8443"]}'
 ```
 
 Then open:

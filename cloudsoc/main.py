@@ -1,20 +1,36 @@
 """Main CLI entry point using Typer"""
 
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
-from cloudsoc.orchestrator import DeploymentOrchestrator, OrchestrationError
+from cloudsoc.aws.ssm import SSMService
+from cloudsoc.orchestrator import (
+    TerraformOrchestrator,
+    BuildOrchestrator,
+    DeploymentOrchestrator,
+    DashboardOrchestrator,
+    OrchestrationError,
+)
 from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
+dashboard_app = typer.Typer(invoke_without_command=True)
+deployment_app = typer.Typer()
+ssm_app = typer.Typer()
 console = Console()
+
+
+def _render_error_panel(message: str) -> Panel:
+    return Panel(Text(message, style="bold red"), expand=False)
 
 
 @app.callback()
@@ -22,7 +38,6 @@ def setup(ctx: typer.Context) -> None:
     """Initialize settings and logging"""
     settings = get_settings()
 
-    # Configure logging
     setup_logger(
         name="cloud-soc",
         level=20 if settings.log_level == "INFO" else 10
@@ -45,7 +60,18 @@ def apply(
         help="Path to Terraform variable file (can be used multiple times)"
     ),
 ) -> None:
-    """Apply infrastructure changes using Terraform"""
+    """Apply infrastructure changes (Terraform only).
+
+    This command handles Terraform operations:
+    - init: Initialize Terraform
+    - import: Import existing resources
+    - validate: Validate configuration
+    - plan: Plan changes
+    - apply: Apply infrastructure
+
+    Does NOT wait for instances or run deployments.
+    Use 'deploy' command after this to configure services.
+    """
     settings = get_settings()
 
     console.print(
@@ -56,22 +82,267 @@ def apply(
     )
 
     try:
-        orchestrator = DeploymentOrchestrator()
-        logger.info("Starting deployment orchestration...")
+        tf_orchestrator = TerraformOrchestrator()
+        logger.info("Starting Terraform infrastructure deployment...")
+
+        tf_orchestrator.init()
+        logger.info("[INIT] Terraform initialized")
+
+        tf_orchestrator.import_all_existing_resources()
+        logger.info("[IMPORT] Resources imported")
+
+        tf_orchestrator.validate()
+        logger.info("[VALIDATE] Configuration valid")
+
         var_file_list = [var_files] if var_files else []
-        orchestrator.apply(auto_approve=auto_approve, var_files=var_file_list)
+        plan_file = tf_orchestrator.plan(var_files=var_file_list)
+        logger.info("[PLAN] Infrastructure plan generated")
+
+        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
+        logger.info("[APPLY] Infrastructure deployed successfully")
+
+        console.print(
+            Panel(
+                "[bold green]✓ Infrastructure provisioning complete![/bold green]\n\n"
+                "Next step: run [bold]cloud-soc deploy[/bold] to deploy services.\n"
+                "Or run [bold]cloud-soc status[/bold] to check infrastructure status.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
 
     except (TerraformStateError, OrchestrationError) as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
 @app.command()
+def build(
+    targets: Optional[List[str]] = typer.Argument(
+        None,
+        help="Build targets (e.g., victim). Use 'all' to build all supported images."
+    ),
+    wait: bool = typer.Option(
+        False,
+        "--wait",
+        help="Wait for the GitHub Actions workflow to complete."
+    ),
+    ref: Optional[str] = typer.Option(
+        None,
+        "--ref",
+        help="Git reference to use for triggering the workflow."
+    ),
+) -> None:
+    """Trigger GitHub Actions workflows to build container images."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Build Images[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        build_orchestrator = BuildOrchestrator()
+        build_orchestrator.build_targets(
+            targets=targets,
+            wait=wait,
+            ref=ref,
+        )
+    except OrchestrationError as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def up(
+    build_flag: bool = typer.Option(
+        False,
+        "--build",
+        help="Build required images before deployment."
+    ),
+    auto_approve: bool = typer.Option(
+        False,
+        "--auto-approve",
+        help="Automatically approve Terraform apply."
+    ),
+    skip_validation: bool = typer.Option(
+        False,
+        "--skip-validation",
+        help="Skip deployment validation"
+    ),
+) -> None:
+    """Provision infrastructure, deploy services, and validate the deployment."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Up[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        tf_orchestrator = TerraformOrchestrator()
+        logger.info("Starting Terraform infrastructure deployment...")
+
+        tf_orchestrator.init()
+        logger.info("[INIT] Terraform initialized")
+
+        tf_orchestrator.import_all_existing_resources()
+        logger.info("[IMPORT] Resources imported")
+
+        tf_orchestrator.validate()
+        logger.info("[VALIDATE] Configuration valid")
+
+        plan_file = tf_orchestrator.plan()
+        logger.info("[PLAN] Infrastructure plan generated")
+
+        tf_orchestrator.apply(plan_file=plan_file, auto_approve=auto_approve)
+        logger.info("[APPLY] Infrastructure deployed successfully")
+
+        if build_flag:
+            build_orchestrator = BuildOrchestrator()
+            build_orchestrator.build_targets(wait=True)
+
+        deployment_orchestrator = DeploymentOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found after apply."
+            )
+
+        logger.info("Waiting for SSM agent readiness...")
+        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
+        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
+        instance_ids = [id for id in [wazuh_id, victim_id] if id]
+
+        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
+        logger.info("[SSM] All instances connected")
+
+        logger.info("Starting service deployments...")
+        deployment_orchestrator.deploy_targets(
+            terraform_outputs,
+            targets=None,
+            skip_validation=skip_validation,
+        )
+
+        if not skip_validation:
+            logger.info("Validating deployment...")
+            deployment_orchestrator.validate_deployment(terraform_outputs)
+
+        console.print(
+            Panel(
+                "[bold green]✓ Cloud SOC stack is up![/bold green]\n\n"
+                "Run [bold]cloud-soc dashboard[/bold] to open the Wazuh dashboard.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
+
+    except (TerraformStateError, OrchestrationError) as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def deploy(
+    targets: Optional[List[str]] = typer.Argument(
+        None,
+        help="Deployment targets (e.g., wazuh victim). Omit to deploy all."
+    ),
+    skip_validation: bool = typer.Option(
+        False,
+        "--skip-validation",
+        help="Skip deployment validation"
+    ),
+) -> None:
+    """Deploy services to instances (SSM + Playbooks).
+
+    This command handles service deployment:
+    - Waits for SSM agent readiness on instances
+    - Runs deployment playbooks for specified targets
+    - Validates deployment completion
+
+    Targets can be:
+    - 'wazuh' or 'wazuh_manager': Deploy Wazuh manager
+    - 'victim' or 'victim_server': Deploy victim server
+    - Multiple targets: 'wazuh victim' (separate each target as argument)
+    - Omit all targets to deploy to all
+
+    Requires infrastructure to be deployed first.
+    """
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Service Deployment[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        tf_orchestrator = TerraformOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found. Run 'cloud-soc apply' first."
+            )
+
+        deployment_orchestrator = DeploymentOrchestrator()
+
+        # Targets is already a list from Typer
+        target_list = targets
+
+        logger.info("Waiting for SSM agent readiness...")
+        wazuh_id = terraform_outputs.get("wazuh_instance_id", {}).get("value")
+        victim_id = terraform_outputs.get("victim_instance_id", {}).get("value")
+        instance_ids = [id for id in [wazuh_id, victim_id] if id]
+
+        deployment_orchestrator.wait_for_ssm_ready(instance_ids)
+        logger.info("[SSM] All instances connected")
+
+        logger.info("Starting service deployments...")
+        deployment_orchestrator.deploy_targets(
+            terraform_outputs,
+            targets=target_list,
+            skip_validation=skip_validation
+        )
+
+        if not skip_validation:
+            logger.info("Validating deployment...")
+            deployment_orchestrator.validate_deployment(terraform_outputs)
+
+        console.print(
+            Panel(
+                "[bold green]✓ Service deployment complete![/bold green]\n\n"
+                "Next step: run [bold]cloud-soc dashboard[/bold] to access the Wazuh dashboard.",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
+
+    except OrchestrationError as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@dashboard_app.callback(invoke_without_command=True)
 def dashboard(
+    ctx: typer.Context,
     local_port: int = typer.Option(
         8443,
         "--local-port",
@@ -82,8 +353,16 @@ def dashboard(
         "--remote-port",
         help="Remote dashboard port on the Wazuh instance"
     ),
+    expose: bool = typer.Option(
+        False,
+        "--expose",
+        help="Print guidance for exposing the forwarded port from the container/host environment"
+    ),
 ) -> None:
     """Open an SSM tunnel to the Wazuh Dashboard."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     console.print(
         Panel(
             "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Dashboard Access[/yellow]",
@@ -92,15 +371,239 @@ def dashboard(
     )
 
     try:
-        orchestrator = DeploymentOrchestrator()
-        orchestrator.open_dashboard(local_port=local_port, remote_port=remote_port)
+        tf_orchestrator = TerraformOrchestrator()
+        terraform_outputs = tf_orchestrator.output()
+
+        if not terraform_outputs:
+            raise OrchestrationError(
+                "No Terraform outputs found. Run 'cloud-soc apply' first."
+            )
+
+        dashboard_orchestrator = DashboardOrchestrator()
+        dashboard_orchestrator.open_tunnel(
+            terraform_outputs,
+            local_port=local_port,
+            remote_port=remote_port,
+            expose=expose,
+        )
     except OrchestrationError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
+
+
+@dashboard_app.command("status")
+def dashboard_status() -> None:
+    """Query the current dashboard tunnel status."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Dashboard Status[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        dashboard_orchestrator = DashboardOrchestrator()
+        status = dashboard_orchestrator.status()
+
+        if status.get("status") == "No active session":
+            console.print(Panel("[bold yellow]No active dashboard tunnel session[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Property")
+        table.add_column("Value")
+        table.add_row("Instance ID", str(status["instance_id"]))
+        table.add_row("Local Port", str(status["local_port"]))
+        table.add_row("Uptime", f"{status['uptime']:.1f}s")
+        table.add_row("Alive", str(status["alive"]))
+
+        console.print(table)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@deployment_app.command("status")
+def deployment_status_command() -> None:
+    """Show the latest deployment status."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Deployment Status[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        deployment_orchestrator = DeploymentOrchestrator()
+        status_data = deployment_orchestrator.get_deployment_status()
+
+        if status_data.get("status") == "No deployment history recorded":
+            console.print(Panel("[bold yellow]No deployment history found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        deployment_table = Table(show_header=True, header_style="bold magenta")
+        deployment_table.add_column("Target")
+        deployment_table.add_column("Status")
+        deployment_table.add_column("Current Task")
+        deployment_table.add_column("Started")
+        deployment_table.add_column("Finished")
+        deployment_table.add_column("Error")
+
+        def format_timestamp(value: Optional[float]) -> str:
+            if not value:
+                return "-"
+            try:
+                return datetime.utcfromtimestamp(value).isoformat() + "Z"
+            except Exception:
+                return str(value)
+
+        for target_name, target_data in status_data.get("targets", {}).items():
+            deployment_table.add_row(
+                target_name,
+                str(target_data.get("status", "-")),
+                str(target_data.get("current_task") or "-"),
+                format_timestamp(target_data.get("started_at")),
+                format_timestamp(target_data.get("finished_at")),
+                str(target_data.get("error", "")) or "-",
+            )
+
+        console.print(deployment_table)
+        console.print(
+            Panel(
+                f"Last deployment status: [bold]{status_data.get('status')}[/bold]\n"
+                f"Started: [bold]{format_timestamp(status_data.get('started_at'))}[/bold]\n"
+                f"Finished: [bold]{format_timestamp(status_data.get('finished_at'))}[/bold]\n"
+                f"State file: [bold]{deployment_orchestrator.deployment_state_file}[/bold]",
+                expand=False,
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@deployment_app.command("logs")
+def deployment_logs_command(
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-n",
+        help="Maximum number of logs to display",
+    ),
+) -> None:
+    """List saved deployment failure logs."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Deployment Logs[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        deployment_orchestrator = DeploymentOrchestrator()
+        log_files = deployment_orchestrator.list_deployment_logs(limit=limit)
+
+        if not log_files:
+            console.print(Panel("[bold yellow]No deployment logs found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Log File")
+        table.add_column("Modified")
+        table.add_column("Size")
+
+        for log_file in log_files:
+            modified = datetime.utcfromtimestamp(log_file.stat().st_mtime).isoformat() + "Z"
+            size = str(log_file.stat().st_size)
+            table.add_row(log_file.name, modified, size)
+
+        console.print(table)
+        console.print(
+            Panel(
+                f"Logs directory: [bold]{deployment_orchestrator.deployment_logs_dir()}[/bold]",
+                expand=False,
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
+@ssm_app.command("sessions")
+def ssm_sessions() -> None:
+    """List active SSM sessions and instance health."""
+    settings = get_settings()
+
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]SSM Sessions[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        ssm_service = SSMService(
+            region=settings.project.aws.region,
+            profile=settings.project.aws.profile
+        )
+
+        sessions = ssm_service.list_active_sessions()
+        if not sessions:
+            console.print(Panel("[bold yellow]No active SSM sessions found[/bold yellow]", expand=False))
+            raise typer.Exit(code=0)
+
+        instance_ids = [session.get("Target") for session in sessions if session.get("Target")]
+        health_map = ssm_service.get_instance_health(instance_ids)
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Session ID")
+        table.add_column("Target")
+        table.add_column("Status")
+        table.add_column("Document")
+        table.add_column("Owner")
+        table.add_column("Started At")
+        table.add_column("Agent Health")
+
+        for session in sessions:
+            target = session.get("Target", "-")
+            health_info = health_map.get(target, {})
+            agent_health = health_info.get("PingStatus", "-")
+            started_at = session.get("StartDate")
+            if started_at:
+                started_at = str(started_at)
+
+            table.add_row(
+                str(session.get("SessionId", "-")),
+                target,
+                str(session.get("Status", "-")),
+                str(session.get("DocumentName", "-")),
+                str(session.get("Owner", "-")),
+                started_at or "-",
+                agent_health,
+            )
+
+        console.print(table)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+
+
+app.add_typer(dashboard_app, name="dashboard")
+app.add_typer(deployment_app, name="deployment")
+app.add_typer(ssm_app, name="ssm")
 
 
 @app.command("import")
@@ -135,11 +638,11 @@ def import_resource(
             )
         )
     except TerraformStateError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        console.print(Panel(f"[bold red]✗ Unexpected error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
@@ -190,7 +693,7 @@ def destroy(
         )
 
     except TerraformStateError as e:
-        console.print(Panel(f"[bold red]✗ Error: {e}[/bold red]", expand=False))
+        console.print(_render_error_panel(f"✗ Error: {e}"))
         raise typer.Exit(code=1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
@@ -210,13 +713,11 @@ def status() -> None:
     )
 
     try:
-        # Get AWS resources
         ec2_service = EC2Service(
             region=settings.project.aws.region,
             profile=settings.project.aws.profile
         )
 
-        # Find VPC
         vpc = ec2_service.find_vpc(project_tag=settings.project.tag)
 
         if vpc:
@@ -224,7 +725,6 @@ def status() -> None:
             console.print(f"  CIDR: {vpc.cidr_block}")
             console.print(f"  State: {vpc.state}")
 
-            # Find subnets
             subnets = ec2_service.find_subnets(vpc.id)
             if subnets:
                 console.print(f"\n[bold]Subnets ({len(subnets)}):[/bold]")
@@ -239,7 +739,6 @@ def status() -> None:
 
                 console.print(table)
 
-            # Find instances
             instances = ec2_service.find_instances(vpc_id=vpc.id, project_tag=settings.project.tag)
             if instances:
                 console.print(f"\n[bold]Instances ({len(instances)}):[/bold]")
@@ -289,3 +788,4 @@ def version() -> None:
 # Create __init__.py for package
 if __name__ == "__main__":
     app()
+ 

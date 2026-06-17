@@ -79,6 +79,23 @@ class ECRService:
             self.logger.error(f"Repository not found: {name}")
             return None
 
+    def list_images(self, repository_name: str) -> List[dict]:
+        """
+        List images for a repository.
+
+        Args:
+            repository_name: ECR repository name
+
+        Returns:
+            List of images metadata
+        """
+        try:
+            response = self.client.describe_images(repositoryName=repository_name)
+            return response.get("imageDetails", [])
+        except ClientError as e:
+            self.logger.error(f"Failed to list images for {repository_name}: {e}")
+            return []
+
     def create_repository(self, name: str, tags: Optional[dict] = None) -> Optional[dict]:
         """
         Create ECR repository.

@@ -1,9 +1,9 @@
-"""Custom YAML deployment executor - replaces Ansible playbook execution."""
+"""Deployment service for executing custom YAML playbooks on remote instances via SSM."""
 
 import os
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 import yaml
 
@@ -49,7 +49,12 @@ class DeploymentTask:
     def to_shell_commands(self, variables: Dict[str, Any]) -> List[str]:
         """Render the task as shell commands for remote execution."""
         if self.task_type == "shell":
-            return [self._substitute_vars(self.config.get("cmd", ""), variables)]
+            cmd = self._substitute_vars(self.config.get("cmd", ""), variables)
+            skip_if_exists = self.config.get("skip_if_exists")
+            if skip_if_exists:
+                skip_path = self._substitute_vars(str(skip_if_exists), variables)
+                cmd = f"[ -f {skip_path} ] || {cmd}"
+            return [cmd]
         if self.task_type == "command":
             cmd = self.config.get("cmd")
             if isinstance(cmd, list):
@@ -62,7 +67,11 @@ class DeploymentTask:
             if isinstance(packages, str):
                 packages = [packages]
             packages = [self._substitute_vars(str(pkg), variables) for pkg in packages or []]
-            install_cmd = "sudo apt-get update -y && sudo apt-get install -y"
+            install_cmd = (
+                "sudo DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none "
+                "apt-get update && sudo DEBIAN_FRONTEND=noninteractive "
+                "APT_LISTCHANGES_FRONTEND=none apt-get install -y"
+            )
             if packages:
                 install_cmd += " " + " ".join(packages)
             return [install_cmd]
@@ -82,9 +91,15 @@ class DeploymentTask:
         if self.task_type == "download":
             source = self._substitute_vars(str(self.config.get("source", "")), variables)
             dest = self._substitute_vars(str(self.config.get("dest", "")), variables)
+            skip_if_exists = self.config.get("skip_if_exists")
             if source.startswith("s3://"):
-                return [f"aws s3 cp {source} {dest}"]
-            return [f"curl -fsSL -o {dest} {source}"]
+                cmd = f"aws s3 cp {source} {dest}"
+            else:
+                cmd = f"curl -fsSL -o {dest} {source}"
+            if skip_if_exists:
+                skip_path = self._substitute_vars(str(skip_if_exists), variables)
+                cmd = f"[ -f {skip_path} ] || {cmd}"
+            return [cmd]
         if self.task_type == "file":
             action = self.config.get("action", "create")
             path = self._substitute_vars(str(self.config.get("path", "")), variables)
@@ -354,6 +369,8 @@ class DeploymentPlan:
         self.name = config.get("name", "deployment")
         self.description = config.get("description", "")
         self.tasks = self._parse_tasks(config.get("tasks", []))
+        self.error_message: str = ""
+        self.raw_error: str = ""
 
     def _parse_tasks(self, tasks_list: List[Dict[str, Any]]) -> List[DeploymentTask]:
         """Parse task definitions from YAML."""
@@ -364,17 +381,24 @@ class DeploymentPlan:
         variables: Optional[Dict[str, Any]] = None,
         ssm_service: Optional[SSMService] = None,
         instance_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Execute all tasks in the plan either locally or remotely via SSM."""
         variables = variables or {}
+        self.error_message = ""
+        self.raw_error = ""
         logger.info(f"Starting deployment: {self.name}")
 
         if ssm_service and instance_ids:
-            return self._execute_remote(variables, ssm_service, instance_ids)
+            return self._execute_remote(variables, ssm_service, instance_ids, progress_callback)
 
         for task in self.tasks:
+            if progress_callback:
+                progress_callback(task.name)
+
             if not task.execute(variables):
-                logger.error(f"Deployment failed at task: {task.name}")
+                self.error_message = f"Deployment failed at task: {task.name}"
+                logger.error(self.error_message)
                 return False
 
         logger.info(f"✓ Deployment completed: {self.name}")
@@ -384,12 +408,16 @@ class DeploymentPlan:
         self,
         variables: Dict[str, Any],
         ssm_service: SSMService,
-        instance_ids: List[str]
+        instance_ids: List[str],
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Execute the deployment remotely via SSM."""
         commands: List[str] = ["set -e"]
 
         for task in self.tasks:
+            if progress_callback:
+                progress_callback(task.name)
+
             try:
                 task_commands = task.to_shell_commands(variables)
             except Exception as e:
@@ -399,8 +427,10 @@ class DeploymentPlan:
             if not task_commands:
                 continue
 
-            commands.append(f"echo 'Running task: {task.name}'")
+            task_name_escaped = task.name.replace('"', '\\"')
+            commands.append(f'printf "%s\\n" "=== START TASK: {task_name_escaped} ==="')
             commands.extend(task_commands)
+            commands.append(f'printf "%s\\n" "=== END TASK: {task_name_escaped} ==="')
 
         script = "\n".join(commands)
         command_id = ssm_service.send_command(
@@ -418,13 +448,24 @@ class DeploymentPlan:
         for instance_id in instance_ids:
             invocation = ssm_service.wait_for_command(command_id, instance_id, timeout=3600, poll_interval=10)
             if not invocation:
-                logger.error(f"SSM remote deployment did not complete for {instance_id}")
+                self.error_message = f"SSM remote deployment did not complete for {instance_id}"
+                self.raw_error = "No command invocation was returned by AWS SSM."
+                logger.error(self.error_message)
+                logger.debug(self.raw_error)
                 return False
-            if invocation.get("status") != "Success" or invocation.get("return_code") != 0:
-                logger.error(
-                    f"SSM remote deployment failed on {instance_id}: status={invocation.get('status')} return_code={invocation.get('return_code')}"
+
+            status = invocation.get("status")
+            return_code = invocation.get("return_code")
+            if status != "Success" or return_code != 0:
+                error_text = invocation.get("error", "").strip()
+                output_text = invocation.get("output", "").strip()
+                self.error_message = (
+                    f"SSM remote deployment failed on {instance_id}: status={status} return_code={return_code}"
                 )
-                logger.error(invocation.get("error", ""))
+                self.raw_error = "\n".join(filter(None, [error_text, output_text]))
+                logger.error(self.error_message)
+                if self.raw_error:
+                    logger.debug(self.raw_error)
                 return False
 
         logger.info(f"✓ Remote deployment completed: {self.name}")
@@ -434,15 +475,17 @@ class DeploymentPlan:
 class DeploymentService:
     """Service for custom YAML-based deployment execution."""
 
-    def __init__(self, deployment_dir: Path = Path("deployment")):
+    def __init__(self, deployment_dir: Path = Path("playbooks")):
         """
         Initialize deployment service.
 
         Args:
-            deployment_dir: Path to deployment definitions directory
+            deployment_dir: Path to playbook definitions directory
         """
         self.deployment_dir = Path(deployment_dir)
         self.logger = logger
+        self.last_error: str = ""
+        self.last_error_detail: str = ""
 
     def run_deployment(
         self,
@@ -450,6 +493,7 @@ class DeploymentService:
         variables: Optional[Dict[str, Any]] = None,
         ssm_service: Optional[SSMService] = None,
         instance_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """
         Run a deployment from a YAML file.
@@ -465,8 +509,12 @@ class DeploymentService:
         """
         deployment_path = self.deployment_dir / f"{deployment_name}.yml"
 
+        self.last_error = ""
+        self.last_error_detail = ""
+
         if not deployment_path.exists():
-            self.logger.error(f"Deployment file not found: {deployment_path}")
+            self.last_error = f"Deployment file not found: {deployment_path}"
+            self.logger.error(self.last_error)
             return False
 
         try:
@@ -474,16 +522,24 @@ class DeploymentService:
                 config = yaml.safe_load(f)
 
             if not config:
-                self.logger.error(f"Empty deployment file: {deployment_path}")
+                self.last_error = f"Empty deployment file: {deployment_path}"
+                self.logger.error(self.last_error)
                 return False
 
             plan = DeploymentPlan(config)
-            return plan.execute(
+            success = plan.execute(
                 variables=variables or {},
                 ssm_service=ssm_service,
                 instance_ids=instance_ids,
+                progress_callback=progress_callback,
             )
 
+            if not success:
+                self.last_error = plan.error_message or f"Deployment failed for {deployment_name}"
+                self.last_error_detail = plan.raw_error
+            return success
+
         except Exception as e:
-            self.logger.error(f"Failed to load deployment: {e}")
+            self.last_error = f"Failed to load deployment: {e}"
+            self.logger.error(self.last_error)
             return False
