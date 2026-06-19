@@ -1,0 +1,32 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install PowerShell Core
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    apt-transport-https \
+    software-properties-common \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -s https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/packages-microsoft-prod.deb \
+    && rm /tmp/packages-microsoft-prod.deb \
+    && apt-get update \
+    && apt-get install -y powershell \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Invoke-AtomicRedTeam PowerShell module
+RUN pwsh -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Invoke-AtomicRedTeam -Force -Scope AllUsers"
+
+# Copy the local atomics folder into the image
+COPY atomics/ /opt/fortress/atomics/
+
+# Ensure permissions
+RUN chmod -R 755 /opt/fortress
+
+# Default command (can be overridden)
+CMD ["pwsh"]
