@@ -44,6 +44,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# ngrok
+RUN curl -sSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+    -o ngrok.tgz \
+    && tar -xzf ngrok.tgz \
+    && mv ngrok /usr/local/bin/ngrok \
+    && rm ngrok.tgz
+
 # uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 

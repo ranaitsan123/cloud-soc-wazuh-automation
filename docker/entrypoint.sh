@@ -21,6 +21,11 @@ if command -v gh >/dev/null 2>&1; then
     fi
 fi
 
+# If an ngrok auth token is provided, register it for the user.
+if [ -n "$NGROK_AUTHTOKEN" ] && command -v ngrok >/dev/null 2>&1; then
+    ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null 2>&1 || true
+fi
+
 # Avoid 'dubious ownership' git error for mounted workspace
 git config --global --add safe.directory /workspace 2>/dev/null || true
 
