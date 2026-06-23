@@ -161,3 +161,19 @@ resource "aws_s3_object" "wazuh_dashboard_wazuh_yml" {
     ManagedBy = "terraform"
   }
 }
+
+resource "aws_s3_object" "atomics_files" {
+  for_each = fileset("${path.module}/../atomics", "**")
+
+  bucket = aws_s3_bucket.wazuh_assets.id
+  key    = "atomics/${each.value}"
+  source = "${path.module}/../atomics/${each.value}"
+  etag   = filemd5("${path.module}/../atomics/${each.value}")
+  depends_on = [aws_s3_bucket.wazuh_assets]
+
+  tags = {
+    Name      = "atomics-${replace(each.value, "/", "-")}" 
+    Project   = "cloud-soc"
+    ManagedBy = "terraform"
+  }
+}
