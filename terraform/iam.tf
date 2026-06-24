@@ -136,7 +136,7 @@ resource "aws_iam_role_policy_attachment" "attach_victim_ssm_managed" {
 
 resource "aws_iam_policy" "victim_ec2_policy" {
   name        = "victim-ec2-policy"
-  description = "Permissions for Victim instance to pull images from ECR."
+  description = "Permissions for Victim instance to pull images from ECR and sync atomics from S3."
 
   tags = {
     Name      = "victim-ec2-policy"
@@ -167,6 +167,18 @@ resource "aws_iam_policy" "victim_ec2_policy" {
         ]
         Resource = [
           "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.ecr_victim_repository_name}"
+        ]
+      },
+      {
+        Sid = "S3AssetBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::${local.asset_bucket_name}",
+          "arn:aws:s3:::${local.asset_bucket_name}/*"
         ]
       }
     ]
