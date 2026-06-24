@@ -13,6 +13,7 @@ from cloudsoc.config.settings import get_settings
 from cloudsoc.terraform.runner import TerraformRunner, TerraformStateError
 from cloudsoc.aws.ec2 import EC2Service
 from cloudsoc.aws.ssm import SSMService
+from cloudsoc.atomic.runner import AtomicRunner
 from cloudsoc.orchestration import (
     BuildOrchestrator,
     DashboardOrchestrator,
@@ -23,6 +24,7 @@ from cloudsoc.orchestration import (
 from cloudsoc.utils.logger import logger, setup_logger
 
 app = typer.Typer(help="Cloud SOC Infrastructure Orchestration Platform")
+atomic_app = typer.Typer()
 dashboard_app = typer.Typer(invoke_without_command=True)
 deployment_app = typer.Typer()
 ssm_app = typer.Typer()
@@ -517,9 +519,53 @@ def ssm_sessions() -> None:
         raise typer.Exit(code=1)
 
 
+app.add_typer(atomic_app, name="atomic")
 app.add_typer(dashboard_app, name="dashboard")
 app.add_typer(deployment_app, name="deployment")
 app.add_typer(ssm_app, name="ssm")
+
+
+@atomic_app.command("list")
+def list_scenarios() -> None:
+    """List available atomic scenarios."""
+    runner = AtomicRunner()
+
+    try:
+        scenarios = runner.list()
+        if not scenarios:
+            console.print("[yellow]No atomic scenarios found.[/yellow]")
+            raise typer.Exit(code=0)
+
+        for technique_id, scenario in scenarios.items():
+            console.print(f"[cyan]{technique_id}[/cyan] → {scenario.get('name', 'Unnamed scenario')}")
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@atomic_app.command("run")
+def run_scenario(technique_id: str) -> None:
+    """Run an atomic scenario by technique ID."""
+    runner = AtomicRunner()
+
+    try:
+        result = runner.run(technique_id)
+        console.print(result.stdout or "")
+        if result.stderr:
+            console.print(result.stderr, style="red")
+        raise typer.Exit(code=result.returncode)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command("import")

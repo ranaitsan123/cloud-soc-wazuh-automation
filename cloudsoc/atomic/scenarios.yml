@@ -1,0 +1,12 @@
+scenarios:
+  T1110.001:
+    name: SSH brute force simulation
+    description: Simulates repeated SSH login attempts
+    command: |
+      pwsh -Command "Invoke-AtomicTest T1110.001 -PathToAtomicsFolder /opt/fortress/atomics -TestNumbers 1 -ShowDetails"
+
+  T1059.001:
+    name: PowerShell execution test
+    description: Executes a basic PowerShell command
+    command: |
+      pwsh -Command "Invoke-AtomicTest T1059.001 -PathToAtomicsFolder /opt/fortress/atomics -TestNumbers 1 -ShowDetails"
