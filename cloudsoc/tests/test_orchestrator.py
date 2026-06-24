@@ -250,10 +250,15 @@ def test_deployment_service_remote_script_adds_debug_trace(tmp_path):
     )
 
     assert result is True
-    script = mock_ssm.send_command.call_args.kwargs["commands"][0]
-    assert "trap" in script
+    commands = mock_ssm.send_command.call_args.kwargs["commands"]
+    # The script is passed as a single joined string; verify it contains the
+    # heredoc start marker, the trap, debug traces, and the closing marker.
+    script = commands[0]
+    assert script.startswith("bash <<'CLOUDSOC_SCRIPT'")
+    assert "trap 'echo \"[deployment] failed on line $LINENO: $BASH_COMMAND\" >&2' ERR" in script
     assert "set -x" in script
     assert "=== START TASK: Debug task ===" in script
+    assert script.strip().endswith("CLOUDSOC_SCRIPT")
 
 
 def test_deployment_service_clears_previous_errors(tmp_path):
@@ -547,7 +552,7 @@ def test_monitor_dashboard_service_parses_adjacent_markers(monkeypatch):
             "---indexer-logs---\n"
             "indexer log line\n"
         ),
-        "error": "",
+        "error": "stderr line 1\nstderr line 2",
     }
     with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_cls:
         mock_ssm_cls.return_value = mock_ssm
@@ -558,6 +563,8 @@ def test_monitor_dashboard_service_parses_adjacent_markers(monkeypatch):
     assert ready is True
     assert "Dashboard is responding" in diagnostics
     assert "mock ps output" in diagnostics
+    assert "stderr line 1" in diagnostics
+    assert "stderr line 2" in diagnostics
 
 
 def test_dashboard_status_command_no_session(monkeypatch):

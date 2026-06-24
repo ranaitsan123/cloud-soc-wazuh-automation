@@ -23,6 +23,8 @@ from cloudsoc.orchestration import (
     TerraformOrchestrator,
     TunnelSession,
 )
+import subprocess
+import time
 
 __all__ = [
     "BuildOrchestrator",
@@ -45,3 +47,9 @@ __all__ = [
     "Settings",
     "get_settings",
 ]
+
+# Expose commonly-patched modules/objects on this compatibility shim so tests
+# that patch names like `cloudsoc.orchestrator.subprocess` or
+# `cloudsoc.orchestrator.time.time` work as expected.
+subprocess = subprocess
+time = time

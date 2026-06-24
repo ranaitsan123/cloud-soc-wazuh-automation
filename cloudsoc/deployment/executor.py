@@ -413,8 +413,9 @@ class DeploymentPlan:
     ) -> bool:
         """Execute the deployment remotely via SSM."""
         commands: List[str] = [
+            "bash <<'CLOUDSOC_SCRIPT'",
             "set -euo pipefail",
-            'trap \'echo "[deployment] failed on line $LINENO: $BASH_COMMAND" >&2\' ERR',
+            "trap 'echo \"[deployment] failed on line $LINENO: $BASH_COMMAND\" >&2' ERR",
         ]
 
         for task in self.tasks:
@@ -437,6 +438,7 @@ class DeploymentPlan:
             commands.append("set +x")
             commands.append(f'printf "%s\\n" "=== END TASK: {task_name_escaped} ==="')
 
+        commands.append("CLOUDSOC_SCRIPT")
         script = "\n".join(commands)
         command_id = ssm_service.send_command(
             instance_ids=instance_ids,

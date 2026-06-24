@@ -151,10 +151,27 @@ class DashboardOrchestrator:
     def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
         health_script = [
             "set +e",
-            "echo '---curl-status---'",
-            f"curl -k -s -o /dev/null -w '%{{http_code}}\n' https://127.0.0.1:{remote_port} || true",
-            "echo '---opensearch-status---'",
-            "curl -k -s -o /dev/null -w '%{http_code}\n' https://127.0.0.1:9200 || true",
+            "start_time=$(date +%s)",
+            "timeout=120",
+            "while true; do",
+            f"  curl_status=$(curl -k -s -o /dev/null -w '%{{http_code}}' https://127.0.0.1:{remote_port} || true)",
+            "  opensearch_status=$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:9200 || true)",
+            "  echo '---curl-status---'",
+            "  echo \"$curl_status\"",
+            "  echo '---opensearch-status---'",
+            "  echo \"$opensearch_status\"",
+            "  if [ \"$curl_status\" = '200' ] || [ \"$curl_status\" = '301' ] || [ \"$curl_status\" = '302' ]; then",
+            "    if [ \"$opensearch_status\" = '200' ]; then",
+            "      break",
+            "    fi",
+            "  fi",
+            "  now=$(date +%s)",
+            "  elapsed=$((now - start_time))",
+            "  if [ \"$elapsed\" -ge \"$timeout\" ]; then",
+            "    break",
+            "  fi",
+            "  sleep 5",
+            "done",
             "echo '---docker-ps---'",
             "docker compose -f /opt/wazuh/docker-compose.yml ps || true",
             "echo '---dashboard-logs---'",
@@ -184,16 +201,17 @@ class DashboardOrchestrator:
         return_code = invocation.get("return_code")
         output = invocation.get("output", "")
         error = invocation.get("error", "").strip()
+        full_output = output or ""
+        if error:
+            full_output = f"{full_output}\n{error}" if full_output else error
 
         if status != "Success" or return_code != 0:
             diagnostics = []
-            if output:
-                diagnostics.append(output.strip())
-            if error:
-                diagnostics.append(error)
+            if full_output.strip():
+                diagnostics.append(full_output.strip())
             return False, "\n".join(diagnostics).strip()
 
-        parsed = dict(re.findall(r"---(?P<name>[a-z-]+)---(.*?)(?=---[a-z-]+---|\Z)", output, flags=re.DOTALL))
+        parsed = dict(re.findall(r"---(?P<name>[a-z-]+)---(.*?)(?=---[a-z-]+---|\Z)", full_output, flags=re.DOTALL))
         curl_status = parsed.get("curl-status", "").strip().splitlines()[0] if parsed.get("curl-status") else ""
         opensearch_status = parsed.get("opensearch-status", "").strip().splitlines()[0] if parsed.get("opensearch-status") else ""
 

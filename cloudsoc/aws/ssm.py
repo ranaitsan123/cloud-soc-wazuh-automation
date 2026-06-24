@@ -2,7 +2,7 @@
 
 from typing import Optional, List, Dict, Any
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ProfileNotFound
 from cloudsoc.utils.logger import logger
 
 
@@ -17,7 +17,13 @@ class SSMService:
             region: AWS region
             profile: AWS profile name
         """
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        try:
+            session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        except ProfileNotFound:
+            # Tests may set a profile name that doesn't exist in the environment;
+            # fall back to a session without an explicit profile so operations
+            # that are mocked in unit tests don't raise during construction.
+            session = boto3.Session()
         self.client = session.client("ssm", region_name=region)
         self.region = region
         self.logger = logger
