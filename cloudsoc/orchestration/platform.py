@@ -8,7 +8,9 @@ from cloudsoc.orchestration.dashboard import DashboardOrchestrator
 from cloudsoc.orchestration.deployment import DeploymentOrchestrator
 from cloudsoc.orchestration.errors import OrchestrationError
 from cloudsoc.orchestration.terraform import TerraformOrchestrator
+from cloudsoc.aws.s3 import S3Service
 from cloudsoc.models.outputs import InfrastructureOutputs
+from cloudsoc.utils.logger import logger
 
 
 class PlatformOrchestrator:
@@ -18,6 +20,10 @@ class PlatformOrchestrator:
         self.deployment = DeploymentOrchestrator(settings=self.settings)
         self.dashboard = DashboardOrchestrator(settings=self.settings)
         self.build = BuildOrchestrator(settings=self.settings)
+        self.s3_service = S3Service(
+            region=self.settings.project.aws.region,
+            profile=self.settings.project.aws.profile,
+        )
 
     def up(
         self,
@@ -30,6 +36,7 @@ class PlatformOrchestrator:
         self.terraform.validate()
         plan_file = self.terraform.plan()
         self.terraform.apply(plan_file=plan_file, auto_approve=auto_approve)
+        self.upload_assets()
 
         if build_flag:
             self.build.build_targets(wait=True)
@@ -51,6 +58,27 @@ class PlatformOrchestrator:
         self.terraform.validate()
         plan_file = self.terraform.plan(var_files=var_files)
         self.terraform.apply(plan_file=plan_file, auto_approve=auto_approve)
+        self.upload_assets()
+
+    def upload_assets(self) -> int:
+        """Upload local S3 assets into the provisioned bucket."""
+        outputs = self.terraform.output()
+        if not outputs.raw:
+            raise OrchestrationError("No Terraform outputs found. Run 'cloud-soc apply' first.")
+
+        bucket_name = outputs.s3_bucket_name
+        if not bucket_name:
+            raise OrchestrationError("Terraform did not produce an S3 bucket output.")
+
+        s3_prefix = outputs.s3_prefix or "wazuh-docker"
+        uploaded_count = self.s3_service.upload_assets(bucket=bucket_name, s3_prefix=s3_prefix)
+
+        if uploaded_count == 0:
+            logger.warning("No asset files were uploaded to S3. Check that wazuh-docker and atomics directories exist.")
+        else:
+            logger.info(f"Uploaded {uploaded_count} asset files to S3 bucket {bucket_name}")
+
+        return uploaded_count
 
     def deploy(
         self,

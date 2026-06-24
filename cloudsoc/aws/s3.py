@@ -1,6 +1,8 @@
 """S3 service for AWS interactions"""
 
+from pathlib import Path
 from typing import Optional, List, Dict, Any
+import mimetypes
 import boto3
 from botocore.exceptions import ClientError
 from cloudsoc.utils.logger import logger
@@ -202,3 +204,83 @@ class S3Service:
                 return {}
             self.logger.warning(f"Failed to get tags for bucket {name}: {e}")
             return {}
+    def _get_project_root(self) -> Path:
+        """Return the repository root directory."""
+        return Path(__file__).resolve().parents[2]
+
+    def _guess_content_type(self, source: str) -> str:
+        """Guess a file MIME type for upload."""
+        content_type, _ = mimetypes.guess_type(source)
+        return content_type or "application/octet-stream"
+
+    def upload_file(
+        self,
+        bucket: str,
+        key: str,
+        source: str,
+        content_type: Optional[str] = None,
+    ) -> bool:
+        """Upload a local file to S3."""
+        extra_args = {}
+        if content_type:
+            extra_args["ContentType"] = content_type
+        else:
+            extra_args["ContentType"] = self._guess_content_type(source)
+
+        try:
+            self.client.upload_file(source, bucket, key, ExtraArgs=extra_args)
+            self.logger.info(f"Uploaded {source} to s3://{bucket}/{key}")
+            return True
+        except ClientError as e:
+            self.logger.error(f"Failed to upload {source} to s3://{bucket}/{key}: {e}")
+            return False
+
+    def upload_directory(
+        self,
+        bucket: str,
+        prefix: str,
+        source_dir: str,
+    ) -> int:
+        """Upload all files from a local directory to S3 under a prefix."""
+        source_path = Path(source_dir)
+        if not source_path.exists() or not source_path.is_dir():
+            self.logger.warning(f"Source directory does not exist: {source_path}")
+            return 0
+
+        uploaded = 0
+        normalized_prefix = prefix.strip("/")
+
+        for path in source_path.rglob("*"):
+            if not path.is_file():
+                continue
+
+            relative_key = path.relative_to(source_path).as_posix()
+            key = f"{normalized_prefix}/{relative_key}" if normalized_prefix else relative_key
+            if self.upload_file(bucket, key, str(path)):
+                uploaded += 1
+
+        return uploaded
+
+    def upload_assets(
+        self,
+        bucket: str,
+        s3_prefix: str = "wazuh-docker",
+    ) -> int:
+        """Upload repository assets to the S3 bucket."""
+        project_root = self._get_project_root()
+        uploaded = 0
+
+        uploaded += self.upload_directory(
+            bucket=bucket,
+            prefix=s3_prefix,
+            source_dir=str(project_root / "wazuh-docker"),
+        )
+
+        uploaded += self.upload_directory(
+            bucket=bucket,
+            prefix="atomics",
+            source_dir=str(project_root / "atomics"),
+        )
+
+        self.logger.info(f"Uploaded {uploaded} asset files to s3://{bucket}/{s3_prefix}")
+        return uploaded

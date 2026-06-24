@@ -68,6 +68,7 @@ def apply(
     - validate: Validate configuration
     - plan: Plan changes
     - apply: Apply infrastructure
+    - upload: Upload S3 asset files to the created bucket
 
     Does NOT wait for instances or run deployments.
     Use 'deploy' command after this to configure services.
@@ -690,6 +691,35 @@ def validate() -> None:
         console.print("[bold green]✓ Configuration is valid[/bold green]")
     except TerraformStateError as e:
         console.print(f"[bold red]✗ Validation failed: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def upload_assets() -> None:
+    """Upload local S3 asset files to the provisioned bucket."""
+    console.print(
+        Panel(
+            "[bold cyan]Cloud SOC[/bold cyan] - [yellow]Upload S3 Assets[/yellow]",
+            expand=False
+        )
+    )
+
+    try:
+        platform_orchestrator = PlatformOrchestrator()
+        uploaded_count = platform_orchestrator.upload_assets()
+        console.print(
+            Panel(
+                f"[bold green]✓ Uploaded {uploaded_count} asset files to S3[/bold green]",
+                title="Cloud SOC",
+                expand=False,
+            )
+        )
+    except OrchestrationError as e:
+        console.print(_render_error_panel(f"✗ Error: {e}"))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print(_render_error_panel(f"✗ Unexpected error: {e}"))
         raise typer.Exit(code=1)
 
 
