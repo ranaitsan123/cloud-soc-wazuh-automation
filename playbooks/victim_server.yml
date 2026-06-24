@@ -71,6 +71,34 @@ tasks:
       - /opt/fortress
     mode: '0755'
 
+  - name: Install PowerShell Core
+    type: shell
+    cmd: |
+      if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
+        curl -s https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb
+        sudo dpkg -i /tmp/packages-microsoft-prod.deb
+        rm /tmp/packages-microsoft-prod.deb
+      fi
+      sudo apt-get update
+      sudo apt-get install -y powershell
+      sudo rm -rf /var/lib/apt/lists/*
+
+  - name: Install Invoke-AtomicRedTeam PowerShell module
+    type: shell
+    cmd: |
+      pwsh -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Invoke-AtomicRedTeam -Force -Scope AllUsers"
+
+  - name: Sync Atomic Red Team atomics from S3
+    type: shell
+    cmd: |
+      if [ "{{ s3_bucket_name }}" = "" ]; then
+        echo "s3_bucket_name not provided"
+        exit 1
+      fi
+
+      sudo mkdir -p /opt/fortress/atomics
+      sudo aws s3 sync "s3://{{ s3_bucket_name }}/atomics/" /opt/fortress/atomics/ --delete
+
   - name: Configure Wazuh agent manager connection
     type: shell
     cmd: |

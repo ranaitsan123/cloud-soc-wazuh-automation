@@ -212,6 +212,50 @@ def test_deployment_service_reports_remote_failure_details(tmp_path):
     assert "status=Failed" in deployment_service.last_error
 
 
+def test_deployment_service_remote_script_adds_debug_trace(tmp_path):
+    deployment_dir = tmp_path / "deployments"
+    deployment_dir.mkdir()
+
+    deployment_yaml = {
+        "name": "test_remote_debug",
+        "description": "Test remote deployment debug tracing",
+        "tasks": [
+            {
+                "name": "Debug task",
+                "type": "shell",
+                "cmd": "echo hello"
+            }
+        ]
+    }
+
+    deployment_file = deployment_dir / "test_remote_debug.yml"
+    with open(deployment_file, "w") as f:
+        yaml.dump(deployment_yaml, f)
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.return_value = "command-789"
+    mock_ssm.wait_for_command.return_value = {
+        "status": "Success",
+        "return_code": 0,
+        "output": "hello",
+        "error": ""
+    }
+
+    deployment_service = DeploymentService(deployment_dir=deployment_dir)
+    result = deployment_service.run_deployment(
+        "test_remote_debug",
+        variables={},
+        ssm_service=mock_ssm,
+        instance_ids=["i-123"]
+    )
+
+    assert result is True
+    script = mock_ssm.send_command.call_args.kwargs["commands"][0]
+    assert "trap" in script
+    assert "set -x" in script
+    assert "=== START TASK: Debug task ===" in script
+
+
 def test_deployment_service_clears_previous_errors(tmp_path):
     deployment_dir = tmp_path / "deployments"
     deployment_dir.mkdir()
@@ -316,6 +360,38 @@ def test_deployment_service_runs_tasks(tmp_path):
         mock_run.return_value = None
         result = deployment_service.run_deployment("test_deploy", variables={})
         assert result is True
+
+
+def test_deployment_orchestrator_passes_s3_bucket_to_victim_deployments(monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "eu-north-1"
+    mock_settings.project.aws.profile = "default"
+
+    mock_deployment_service = Mock()
+    mock_deployment_service.run_deployment.return_value = True
+
+    with patch("cloudsoc.orchestration.deployment.DeploymentService", return_value=mock_deployment_service), \
+         patch("cloudsoc.orchestration.deployment.BuildOrchestrator") as mock_build_orchestrator_cls, \
+         patch("cloudsoc.orchestration.deployment.SSMService") as mock_ssm_service_cls:
+        mock_build_orchestrator = Mock()
+        mock_build_orchestrator_cls.return_value = mock_build_orchestrator
+        mock_ssm_service_cls.return_value = Mock()
+
+        deployment_orchestrator = DeploymentOrchestrator(settings=mock_settings)
+        outputs = Mock()
+        outputs.wazuh_instance_id = "i-123"
+        outputs.victim_instance_id = "i-456"
+        outputs.s3_bucket_name = "test-bucket"
+        outputs.s3_prefix = "wazuh-docker"
+        outputs.wazuh_instance_private_ip = "10.0.0.10"
+        outputs.ecr_victim_repository_url = "123456789012.dkr.ecr.eu-north-1.amazonaws.com/victim"
+        outputs.raw = {}
+
+        deployment_orchestrator.deploy_targets(outputs, targets=["victim"])
+
+        call_kwargs = mock_deployment_service.run_deployment.call_args.kwargs
+        assert call_kwargs["variables"]["s3_bucket_name"] == "test-bucket"
+        assert call_kwargs["variables"]["wazuh_manager_ip"] == "10.0.0.10"
 
 
 def test_dashboard_open_tunnel_expose_does_not_send_local_address(tmp_path, monkeypatch):

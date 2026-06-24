@@ -154,6 +154,7 @@ class DeploymentOrchestrator:
                     }
                 elif deployment_name == "victim_server":
                     variables = {
+                        "s3_bucket_name": outputs.s3_bucket_name or "",
                         "wazuh_manager_ip": outputs.wazuh_instance_private_ip or "127.0.0.1",
                         "aws_region": self.settings.project.aws.region,
                         "ecr_victim_repository_url": outputs.ecr_victim_repository_url or "",

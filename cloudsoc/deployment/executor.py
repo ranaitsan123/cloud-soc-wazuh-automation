@@ -412,7 +412,10 @@ class DeploymentPlan:
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
         """Execute the deployment remotely via SSM."""
-        commands: List[str] = ["set -e"]
+        commands: List[str] = [
+            "set -euo pipefail",
+            'trap \'echo "[deployment] failed on line $LINENO: $BASH_COMMAND" >&2\' ERR',
+        ]
 
         for task in self.tasks:
             if progress_callback:
@@ -429,7 +432,9 @@ class DeploymentPlan:
 
             task_name_escaped = task.name.replace('"', '\\"')
             commands.append(f'printf "%s\\n" "=== START TASK: {task_name_escaped} ==="')
+            commands.append("set -x")
             commands.extend(task_commands)
+            commands.append("set +x")
             commands.append(f'printf "%s\\n" "=== END TASK: {task_name_escaped} ==="')
 
         script = "\n".join(commands)
