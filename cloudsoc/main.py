@@ -548,8 +548,23 @@ def list_scenarios() -> None:
 
 @atomic_app.command("run")
 def run_scenario(technique_id: str) -> None:
-    """Run an atomic scenario by technique ID."""
-    runner = AtomicRunner()
+    """Run an atomic scenario by technique ID on the victim instance."""
+    settings = get_settings()
+    platform_orchestrator = PlatformOrchestrator()
+    outputs = platform_orchestrator.terraform.output()
+    victim_instance_id = getattr(outputs, "victim_instance_id", None)
+
+    if not victim_instance_id:
+        console.print("[red]Error: No victim instance ID found in Terraform outputs.[/red]")
+        raise typer.Exit(code=1)
+
+    runner = AtomicRunner(
+        ssm_service=SSMService(
+            region=settings.project.aws.region,
+            profile=settings.project.aws.profile,
+        ),
+        instance_ids=[victim_instance_id],
+    )
 
     try:
         result = runner.run(technique_id)
@@ -557,6 +572,8 @@ def run_scenario(technique_id: str) -> None:
         if result.stderr:
             console.print(result.stderr, style="red")
         raise typer.Exit(code=result.returncode)
+    except typer.Exit:
+        raise
     except FileNotFoundError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
