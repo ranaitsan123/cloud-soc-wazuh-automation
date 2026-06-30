@@ -89,7 +89,8 @@ class PlatformOrchestrator:
         if not outputs.raw:
             raise OrchestrationError("No Terraform outputs found. Run 'cloud-soc apply' first.")
 
-        instance_ids = [id for id in [outputs.wazuh_instance_id, outputs.victim_instance_id] if id]
+        deployment_targets = self._resolve_deployment_targets(targets)
+        instance_ids = self._resolve_instance_ids(outputs, deployment_targets)
         self.deployment.wait_for_ssm_ready(instance_ids)
         self.deployment.deploy_targets(outputs, targets=targets, skip_validation=skip_validation)
 
@@ -97,6 +98,30 @@ class PlatformOrchestrator:
             self.deployment.validate_deployment(outputs)
 
         return outputs
+
+    def _resolve_deployment_targets(self, targets: Optional[List[str]]) -> List[str]:
+        if not targets:
+            return ["wazuh_manager", "victim_server"]
+
+        resolved_targets: List[str] = []
+        for target in targets:
+            normalized_target = target.strip().lower()
+            if normalized_target in {"wazuh", "wazuh_manager"}:
+                resolved_targets.append("wazuh_manager")
+            elif normalized_target in {"victim", "victim_server"}:
+                resolved_targets.append("victim_server")
+            else:
+                resolved_targets.append(target)
+
+        return resolved_targets
+
+    def _resolve_instance_ids(self, outputs: InfrastructureOutputs, targets: List[str]) -> List[str]:
+        instance_ids: List[str] = []
+        if "wazuh_manager" in targets and outputs.wazuh_instance_id:
+            instance_ids.append(outputs.wazuh_instance_id)
+        if "victim_server" in targets and outputs.victim_instance_id:
+            instance_ids.append(outputs.victim_instance_id)
+        return instance_ids
 
     def open_dashboard_tunnel(
         self,

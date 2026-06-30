@@ -16,6 +16,7 @@ from cloudsoc.orchestrator import (
     DashboardOrchestrator,
     DeploymentOrchestrator,
     OrchestrationError,
+    PlatformOrchestrator,
     SSMDashboardTunnelManager,
     TunnelSession,
 )
@@ -125,6 +126,31 @@ def test_ssm_wait_for_command_handles_pending_invocation(tmp_path):
         assert invocation is not None
         assert invocation["status"] == "Success"
         assert invocation["return_code"] == 0
+
+
+def test_platform_orchestrator_deploy_waits_only_for_requested_targets():
+    outputs = MagicMock()
+    outputs.raw = {"foo": "bar"}
+    outputs.wazuh_instance_id = "i-wazuh"
+    outputs.victim_instance_id = "i-victim"
+
+    orchestrator = PlatformOrchestrator.__new__(PlatformOrchestrator)
+    orchestrator.terraform = Mock()
+    orchestrator.deployment = Mock()
+    orchestrator.dashboard = Mock()
+    orchestrator.build = Mock()
+    orchestrator.s3_service = Mock()
+    orchestrator.settings = Mock()
+    orchestrator.terraform.output.return_value = outputs
+
+    orchestrator.deploy(targets=["wazuh"], skip_validation=True)
+
+    orchestrator.deployment.wait_for_ssm_ready.assert_called_once_with(["i-wazuh"])
+    orchestrator.deployment.deploy_targets.assert_called_once_with(
+        outputs,
+        targets=["wazuh"],
+        skip_validation=True,
+    )
 
 
 def test_deployment_service_missing_file(tmp_path):
