@@ -6,6 +6,7 @@ variable "s3_bucket_name" {
 
 resource "aws_s3_bucket" "wazuh_assets" {
   bucket = local.asset_bucket_name
+  force_destroy = true
 
   tags = {
     Name      = local.asset_bucket_name

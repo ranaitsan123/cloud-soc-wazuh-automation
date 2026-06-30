@@ -168,11 +168,27 @@ class S3Service:
         """
         try:
             if force:
-                # Delete all objects first
-                paginator = self.client.get_paginator("list_objects_v2")
+                # Delete all object versions and delete markers for versioned buckets.
+                paginator = self.client.get_paginator("list_object_versions")
+                objects_to_delete = []
+
                 for page in paginator.paginate(Bucket=name):
-                    for obj in page.get("Contents", []):
-                        self.client.delete_object(Bucket=name, Key=obj["Key"])
+                    for version in page.get("Versions", []):
+                        objects_to_delete.append(
+                            {"Key": version["Key"], "VersionId": version["VersionId"]}
+                        )
+                    for delete_marker in page.get("DeleteMarkers", []):
+                        objects_to_delete.append(
+                            {"Key": delete_marker["Key"], "VersionId": delete_marker["VersionId"]}
+                        )
+
+                    while objects_to_delete:
+                        batch = objects_to_delete[:1000]
+                        objects_to_delete = objects_to_delete[1000:]
+                        self.client.delete_objects(
+                            Bucket=name,
+                            Delete={"Objects": batch, "Quiet": True},
+                        )
 
             self.client.delete_bucket(Bucket=name)
             self.logger.info(f"✓ Deleted bucket: {name}")
