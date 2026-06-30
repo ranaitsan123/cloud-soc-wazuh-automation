@@ -33,13 +33,13 @@ class TerraformOrchestrator:
     def init(self) -> None:
         self.tf_runner.init()
 
-    def import_all_existing_resources(self) -> None:
+    def import_all_existing_resources(self, var_files: Optional[List[str]] = None) -> None:
         try:
             importer = ResourceImporter(
                 tf_runner=self.tf_runner,
                 settings=self.settings,
             )
-            importer.import_all_existing_resources()
+            importer.import_all_existing_resources(var_files=var_files)
             logger.info("✓ Resource import check completed")
         except Exception as e:
             logger.warning(f"Resource import encountered an issue (non-critical): {e}")

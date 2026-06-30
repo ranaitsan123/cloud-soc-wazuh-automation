@@ -18,7 +18,7 @@ resource "aws_s3_bucket" "wazuh_assets" {
 resource "aws_s3_bucket_versioning" "wazuh_assets" {
   bucket = aws_s3_bucket.wazuh_assets.id
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 

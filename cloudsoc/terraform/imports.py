@@ -1,5 +1,7 @@
 """Resource import mechanism for existing AWS resources into Terraform state"""
 
+import json
+import re
 from typing import List, Optional, Tuple, Dict
 from pathlib import Path
 
@@ -43,7 +45,7 @@ class ResourceImporter:
             profile=self.settings.project.aws.profile
         )
 
-    def import_all_existing_resources(self) -> None:
+    def import_all_existing_resources(self, var_files: Optional[List[str]] = None) -> None:
         """Import all existing resources that match the project configuration."""
         logger.info("Checking for existing AWS resources to import...")
 
@@ -52,7 +54,7 @@ class ResourceImporter:
         self._import_vpc_and_networking()
         self._import_security_groups()
         self._import_instances()
-        self._import_s3_resources()
+        self._import_s3_resources(var_files=var_files)
         self._import_ecr_resources()
 
     def _import_iam_resources(self) -> None:
@@ -232,7 +234,7 @@ class ResourceImporter:
             else:
                 logger.debug(f"No existing instance found for {instance_name}")
 
-    def _import_s3_resources(self) -> None:
+    def _import_s3_resources(self, var_files: Optional[List[str]] = None) -> None:
         """Import existing S3 bucket."""
         logger.info("Importing existing S3 resources...")
 
@@ -240,16 +242,27 @@ class ResourceImporter:
             logger.debug("S3 bucket already in state")
             return
 
-        # Try to find S3 bucket by tag
+        # Try to find S3 bucket by tag first
         bucket_name = self._find_s3_bucket_by_tag(
             project_tag=self.settings.project.tag
         )
+
+        # Fall back to explicit s3_bucket_name from var files if a tagged bucket was not found
+        if not bucket_name:
+            bucket_name = self._find_s3_bucket_name_in_var_files(var_files)
+            if bucket_name:
+                bucket = self.s3_service.find_bucket(bucket_name)
+                if bucket:
+                    logger.info(f"Importing existing S3 bucket by explicit name: {bucket_name}")
+                else:
+                    logger.debug(f"Bucket specified by var file does not exist: {bucket_name}")
+                    bucket_name = None
 
         if bucket_name:
             logger.info(f"Importing S3 bucket: {bucket_name}")
             self.tf_runner.import_resource("aws_s3_bucket.wazuh_assets", bucket_name)
         else:
-            logger.debug("No existing S3 bucket found with project tag")
+            logger.debug("No existing S3 bucket found to import")
 
     def _import_ecr_resources(self) -> None:
         """Import existing ECR repositories."""
@@ -379,6 +392,32 @@ class ResourceImporter:
                 return route_tables[0]["RouteTableId"]
         except Exception as e:
             logger.warning(f"Failed to find route table: {e}")
+        return None
+
+    def _find_s3_bucket_name_in_var_files(self, var_files: Optional[List[str]] = None) -> Optional[str]:
+        """Find s3_bucket_name from Terraform variable files."""
+        if not var_files:
+            return None
+
+        for var_file in var_files:
+            path = Path(var_file)
+            if not path.exists():
+                logger.debug(f"Terraform var file not found: {var_file}")
+                continue
+
+            try:
+                if path.suffix.lower() == ".json":
+                    data = json.loads(path.read_text())
+                    if isinstance(data, dict) and "s3_bucket_name" in data:
+                        return str(data["s3_bucket_name"])
+                else:
+                    content = path.read_text()
+                    match = re.search(r'^[ \t]*s3_bucket_name\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', content, re.MULTILINE)
+                    if match:
+                        return match.group(1) or match.group(2)
+            except Exception as e:
+                logger.warning(f"Failed to parse Terraform var file {var_file}: {e}")
+
         return None
 
     def _find_s3_bucket_by_tag(self, project_tag: str) -> Optional[str]:

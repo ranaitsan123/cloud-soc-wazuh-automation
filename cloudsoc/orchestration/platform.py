@@ -54,7 +54,7 @@ class PlatformOrchestrator:
 
     def apply(self, auto_approve: bool = False, var_files: Optional[List[str]] = None) -> None:
         self.terraform.init()
-        self.terraform.import_all_existing_resources()
+        self.terraform.import_all_existing_resources(var_files=var_files)
         self.terraform.validate()
         plan_file = self.terraform.plan(var_files=var_files)
         self.terraform.apply(plan_file=plan_file, auto_approve=auto_approve)
