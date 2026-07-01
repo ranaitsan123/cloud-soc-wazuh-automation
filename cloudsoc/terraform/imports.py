@@ -49,6 +49,7 @@ class ResourceImporter:
 
         # Import resources in order of dependencies
         self._import_iam_resources()
+        self._import_iam_policy_attachments()
         self._import_vpc_and_networking()
         self._import_security_groups()
         self._import_instances()
@@ -246,10 +247,70 @@ class ResourceImporter:
         )
 
         if bucket_name:
+            self._import_random_id_bucket_suffix(bucket_name)
             logger.info(f"Importing S3 bucket: {bucket_name}")
             self.tf_runner.import_resource("aws_s3_bucket.wazuh_assets", bucket_name)
         else:
             logger.debug("No existing S3 bucket found with project tag")
+
+    def _import_iam_policy_attachments(self) -> None:
+        """Import IAM role policy attachments if they exist."""
+        logger.info("Importing existing IAM policy attachments...")
+
+        attachments = [
+            (
+                "aws_iam_role_policy_attachment.attach_wazuh_policy",
+                "wazuh-ec2-role",
+                "wazuh-ec2-policy",
+            ),
+            (
+                "aws_iam_role_policy_attachment.attach_ssm_managed",
+                "wazuh-ec2-role",
+                "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+            ),
+            (
+                "aws_iam_role_policy_attachment.attach_victim_ssm_managed",
+                "victim-ec2-role",
+                "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+            ),
+            (
+                "aws_iam_role_policy_attachment.attach_victim_policy",
+                "victim-ec2-role",
+                "victim-ec2-policy",
+            ),
+        ]
+
+        for address, role_name, policy_identifier in attachments:
+            if self.tf_runner.state_contains(address):
+                logger.debug(f"IAM attachment already in state: {address}")
+                continue
+
+            policy_arn = policy_identifier
+            if policy_identifier.endswith("-policy"):
+                policy_arn = self.iam_service.get_policy_arn(policy_identifier)
+                if not policy_arn:
+                    logger.debug(f"No existing policy found for {policy_identifier}")
+                    continue
+
+            attachment_id = f"{role_name}/{policy_arn}"
+            logger.info(f"Importing IAM attachment: {address} ({attachment_id})")
+            self.tf_runner.import_resource(address, attachment_id)
+
+    def _import_random_id_bucket_suffix(self, bucket_name: str) -> None:
+        """Import the random_id used to generate the S3 bucket suffix."""
+        if self.tf_runner.state_contains("random_id.bucket_suffix"):
+            logger.debug("Random id bucket suffix already in state")
+            return
+
+        suffix = bucket_name.split("-")[-1]
+        if not suffix:
+            logger.warning(
+                f"Could not determine random bucket suffix from bucket name: {bucket_name}"
+            )
+            return
+
+        logger.info(f"Importing random bucket suffix for S3 bucket: {suffix}")
+        self.tf_runner.import_resource("random_id.bucket_suffix", suffix)
 
     def _import_ecr_resources(self) -> None:
         """Import existing ECR repositories."""
