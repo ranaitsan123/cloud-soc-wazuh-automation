@@ -778,11 +778,18 @@ class DeploymentOrchestrator:
             raise OrchestrationError("Deployment validation failed: Wazuh instance is not available via SSM")
 
         dashboard = DashboardOrchestrator(settings=self.settings)
-        dashboard_ready, diagnostics = dashboard._monitor_dashboard_service(wazuh_id, remote_port=443)
+        max_attempts = 6
+        dashboard_ready, diagnostics = dashboard._monitor_dashboard_service(
+            wazuh_id,
+            remote_port=443,
+            max_attempts=max_attempts,
+        )
         if not dashboard_ready:
             message = "Deployment validation failed: remote dashboard health check failed."
             if diagnostics:
                 message += f"\n{diagnostics}"
+            if "attempted" not in (diagnostics or ""):
+                message += f"\n\nDashboard health check was attempted {max_attempts} times."
             raise OrchestrationError(message)
 
         console.print(Panel("[bold green]✓ Deployment validated successfully[/bold green]", expand=False))
@@ -934,8 +941,36 @@ class DashboardOrchestrator:
     def _is_codespaces(self) -> bool:
         return os.getenv("CODESPACES") == "true" or os.getenv("GITHUB_CODESPACES") == "true"
 
-    def _monitor_dashboard_service(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
+    def _monitor_dashboard_service(
+        self,
+        instance_id: str,
+        remote_port: int,
+        max_attempts: int = 6,
+        retry_interval: int = 10,
+    ) -> tuple[bool, str]:
         """Check the Wazuh dashboard HTTP service on the remote instance via SSM."""
+        diagnostics = ""
+
+        for attempt in range(1, max_attempts + 1):
+            dashboard_ready, diagnostics = self._run_dashboard_health_check(instance_id, remote_port)
+            if dashboard_ready:
+                return True, diagnostics
+
+            if attempt < max_attempts:
+                logger.info(
+                    f"Dashboard health check attempt {attempt}/{max_attempts} failed; retrying in {retry_interval} seconds..."
+                )
+                time.sleep(retry_interval)
+
+        if diagnostics:
+            diagnostics = f"{diagnostics}\n\nDashboard health check attempted {max_attempts} times."
+        else:
+            diagnostics = f"Dashboard health check attempted {max_attempts} times."
+
+        return False, diagnostics
+
+    def _run_dashboard_health_check(self, instance_id: str, remote_port: int) -> tuple[bool, str]:
+        """Run a single remote SSM-based dashboard health check."""
         health_script = [
             "set +e",
             "echo '---curl-status---'",

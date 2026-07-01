@@ -484,6 +484,105 @@ def test_monitor_dashboard_service_parses_adjacent_markers(monkeypatch):
     assert "mock ps output" in diagnostics
 
 
+def test_monitor_dashboard_service_retries_until_ready(monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.side_effect = ["command-1", "command-2"]
+    mock_ssm.wait_for_command.side_effect = [
+        {
+            "status": "Success",
+            "return_code": 0,
+            "output": (
+                "---curl-status---\n"
+                "000---opensearch-status---\n"
+                "000\n"
+                "---docker-ps---\n"
+                "mock ps output\n"
+                "---dashboard-logs---\n"
+                "dashboard log line\n"
+                "---indexer-logs---\n"
+                "indexer log line\n"
+            ),
+            "error": "",
+        },
+        {
+            "status": "Success",
+            "return_code": 0,
+            "output": (
+                "---curl-status---\n"
+                "200---opensearch-status---\n"
+                "200\n"
+                "---docker-ps---\n"
+                "mock ps output\n"
+                "---dashboard-logs---\n"
+                "dashboard log line\n"
+                "---indexer-logs---\n"
+                "indexer log line\n"
+            ),
+            "error": "",
+        },
+    ]
+
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_cls:
+        mock_ssm_cls.return_value = mock_ssm
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        ready, diagnostics = dashboard._monitor_dashboard_service(
+            "i-123",
+            remote_port=443,
+            max_attempts=2,
+            retry_interval=0,
+        )
+
+    assert ready is True
+    assert mock_ssm.send_command.call_count == 2
+    assert mock_ssm.wait_for_command.call_count == 2
+    assert "Dashboard is responding" in diagnostics
+
+
+def test_monitor_dashboard_service_reports_attempt_count_on_failure(monkeypatch):
+    mock_settings = Mock()
+    mock_settings.project.aws.region = "us-east-1"
+    mock_settings.project.aws.profile = "default"
+
+    mock_ssm = Mock(spec=SSMService)
+    mock_ssm.send_command.side_effect = ["command-1", "command-2"]
+    mock_ssm.wait_for_command.return_value = {
+        "status": "Success",
+        "return_code": 0,
+        "output": (
+            "---curl-status---\n"
+            "000---opensearch-status---\n"
+            "000\n"
+            "---docker-ps---\n"
+            "mock ps output\n"
+            "---dashboard-logs---\n"
+            "dashboard log line\n"
+            "---indexer-logs---\n"
+            "indexer log line\n"
+        ),
+        "error": "",
+    }
+
+    with patch("cloudsoc.orchestrator.SSMService") as mock_ssm_cls:
+        mock_ssm_cls.return_value = mock_ssm
+
+        dashboard = DashboardOrchestrator(settings=mock_settings)
+        ready, diagnostics = dashboard._monitor_dashboard_service(
+            "i-123",
+            remote_port=443,
+            max_attempts=2,
+            retry_interval=0,
+        )
+
+    assert ready is False
+    assert "Dashboard health check attempted 2 times." in diagnostics
+    assert "Dashboard returned HTTP status 000." in diagnostics
+
+
 def test_dashboard_status_command_no_session(monkeypatch):
     runner = CliRunner()
     with patch("cloudsoc.orchestrator.DashboardOrchestrator.status", return_value={"status": "No active session"}):
