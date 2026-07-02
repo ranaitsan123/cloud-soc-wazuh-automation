@@ -180,6 +180,34 @@ class S3Service:
             self.logger.error(f"Failed to delete bucket {name}: {e}")
             return False
 
+    def get_bucket_versioning(self, name: str) -> Dict[str, Any]:
+        """Get the versioning configuration for a bucket."""
+        try:
+            response = self.client.get_bucket_versioning(Bucket=name)
+            return response or {}
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchBucket":
+                self.logger.warning(f"Bucket not found for versioning lookup: {name}")
+                return {}
+            self.logger.warning(f"Failed to get versioning for bucket {name}: {e}")
+            return {}
+
+    def list_objects(self, name: str, prefix: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List objects in a bucket, optionally filtered by prefix."""
+        try:
+            kwargs = {"Bucket": name}
+            if prefix:
+                kwargs["Prefix"] = prefix
+
+            paginator = self.client.get_paginator("list_objects_v2")
+            objects = []
+            for page in paginator.paginate(**kwargs):
+                objects.extend(page.get("Contents", []))
+            return objects
+        except ClientError as e:
+            self.logger.warning(f"Failed to list objects for bucket {name}: {e}")
+            return []
+
     def get_bucket_tags(self, name: str) -> Dict[str, str]:
         """
         Get tags for a bucket.

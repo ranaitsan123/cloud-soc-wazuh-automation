@@ -234,24 +234,56 @@ class ResourceImporter:
                 logger.debug(f"No existing instance found for {instance_name}")
 
     def _import_s3_resources(self) -> None:
-        """Import existing S3 bucket."""
+        """Import existing S3 bucket, versioning, and tracked objects."""
         logger.info("Importing existing S3 resources...")
-
-        if self.tf_runner.state_contains("aws_s3_bucket.wazuh_assets"):
-            logger.debug("S3 bucket already in state")
-            return
 
         # Try to find S3 bucket by tag
         bucket_name = self._find_s3_bucket_by_tag(
             project_tag=self.settings.project.tag
         )
 
-        if bucket_name:
-            self._import_random_id_bucket_suffix(bucket_name)
+        if not bucket_name:
+            logger.debug("No existing S3 bucket found with project tag")
+            return
+
+        self._import_random_id_bucket_suffix(bucket_name)
+
+        if not self.tf_runner.state_contains("aws_s3_bucket.wazuh_assets"):
             logger.info(f"Importing S3 bucket: {bucket_name}")
             self.tf_runner.import_resource("aws_s3_bucket.wazuh_assets", bucket_name)
-        else:
-            logger.debug("No existing S3 bucket found with project tag")
+
+        versioning = self.s3_service.get_bucket_versioning(bucket_name)
+        if versioning.get("Status") == "Enabled" and not self.tf_runner.state_contains("aws_s3_bucket_versioning.wazuh_assets"):
+            logger.info(f"Importing S3 bucket versioning for: {bucket_name}")
+            self.tf_runner.import_resource("aws_s3_bucket_versioning.wazuh_assets", bucket_name)
+
+        object_mappings = [
+            ("aws_s3_object.wazuh_docker_compose", "wazuh-docker/docker-compose.yml"),
+            ("aws_s3_object.wazuh_certs_generator", "wazuh-docker/generate-indexer-certs.yml"),
+            ("aws_s3_object.wazuh_config_certs", "wazuh-docker/config/certs.yml"),
+            ("aws_s3_object.wazuh_manager_conf", "wazuh-docker/config/wazuh_cluster/wazuh_manager.conf"),
+            ("aws_s3_object.wazuh_indexer_config", "wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml"),
+            ("aws_s3_object.wazuh_indexer_users", "wazuh-docker/config/wazuh_indexer/internal_users.yml"),
+            ("aws_s3_object.wazuh_dashboard_config", "wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml"),
+            ("aws_s3_object.wazuh_dashboard_wazuh_yml", "wazuh-docker/config/wazuh_dashboard/wazuh.yml"),
+        ]
+
+        existing_objects = {
+            obj.get("Key")
+            for obj in self.s3_service.list_objects(bucket_name)
+            if obj.get("Key")
+        }
+
+        for address, key in object_mappings:
+            if self.tf_runner.state_contains(address):
+                logger.debug(f"S3 object already in state: {address}")
+                continue
+
+            if key in existing_objects:
+                logger.info(f"Importing S3 object: {address} ({bucket_name}/{key})")
+                self.tf_runner.import_resource(address, f"{bucket_name}/{key}")
+            else:
+                logger.debug(f"S3 object not found, skipping import: {address} ({key})")
 
     def _import_iam_policy_attachments(self) -> None:
         """Import IAM role policy attachments if they exist."""
@@ -292,7 +324,7 @@ class ResourceImporter:
                     logger.debug(f"No existing policy found for {policy_identifier}")
                     continue
 
-            attachment_id = f"{role_name}/{policy_arn}"
+            attachment_id = f"{role_name}:{policy_arn}"
             logger.info(f"Importing IAM attachment: {address} ({attachment_id})")
             self.tf_runner.import_resource(address, attachment_id)
 
@@ -443,12 +475,18 @@ class ResourceImporter:
         return None
 
     def _find_s3_bucket_by_tag(self, project_tag: str) -> Optional[str]:
-        """Find S3 bucket by project tag."""
+        """Find an existing S3 bucket by project tag or by the expected Cloud SOC naming pattern."""
         try:
             buckets = self.s3_service.list_buckets()
             for bucket in buckets:
-                if bucket.tags.get("Project") == project_tag:
+                bucket_tags = getattr(bucket, "tags", {}) or {}
+                if bucket_tags.get("Project") == project_tag:
                     return bucket.name
+
+            for bucket in buckets:
+                bucket_name = getattr(bucket, "name", "")
+                if bucket_name.startswith("cloud-soc-wazuh-assets"):
+                    return bucket_name
         except Exception as e:
             logger.warning(f"Failed to find S3 bucket by tag: {e}")
         return None
