@@ -969,40 +969,370 @@ def run_terraform_command(cmd):
 
 ## 5.2 Déploiement de la Stack Wazuh {#52-deploiement-wazuh}
 
-### 5.2.1 Configuration et Architecture du Docker Compose
+### 5.2.1 Configuration et architecture réelle du Docker Compose
 
 **Localisation** : `/wazuh-docker/docker-compose.yml`
 
-**Réseau Bridge** : `wazuh-net`
+La pile de supervision a été implémentée selon une architecture microservices stricte, avec une séparation claire entre le moteur de recherche, le gestionnaire de supervision et le tableau de bord. La configuration réelle utilisée dans le dépôt présente une topologie très proche du standard Wazuh officiel, mais adaptée au flux d'automatisation AWS/SSM du projet.
+
+Le fichier de déploiement contient bien trois services principaux :
+
+- `wazuh.manager` : conteneur principal du SIEM, exposant les ports `1514`, `1515`, `514/udp` et `55000` et montant les volumes `/var/ossec/...` pour la configuration, les alertes et la file de messages.
+- `wazuh.indexer` : moteur de stockage et d'indexation OpenSearch, configuré avec `OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g` et monté avec des volumes persistants comme `wazuh-indexer-data`.
+- `wazuh.dashboard` : interface web Wazuh Dashboard, exposée sur le port `443:5601` et reliée à l'indexer et au manager via les fichiers de configuration internes.
+
+La configuration du dépôt inclut aussi la génération de certificats TLS pour chaque composant, avec montage de fichiers de certificat dans les chemins suivants :
+
+- `/etc/ssl/root-ca.pem`
+- `/etc/ssl/filebeat.pem`
+- `/etc/ssl/filebeat.key`
+- `/usr/share/wazuh-indexer/config/certs/...`
+- `/usr/share/wazuh-dashboard/certs/...`
+
+Cette structure est essentielle pour garantir l'authentification mutuelle entre les éléments du cluster et pour éviter toute communication non chiffrée sur le réseau interne VPC.
+
+### 5.2.2 Génération des certificats et sécurisation du cluster Wazuh
+
+La sécurisation du cluster a été intégrée au cycle de déploiement de manière explicite. La commande de génération des certificats est poussée dans le dépôt via le fichier `wazuh-docker/generate-indexer-certs.yml`, puis appelée à partir du playbook `playbooks/wazuh_manager.yml` :
 
 ```yaml
-services:
-  wazuh.indexer:
-    image: wazuh/wazuh-indexer:4.14.4
-    ports:
-      - "9200:9200"
-    environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
-    volumes:
-      - wazuh-indexer-data:/var/lib/wazuh-indexer
-      - ./config/wazuh_indexer_ssl_certs/:/usr/share/wazuh-indexer/config/certs/
-
-  wazuh.manager:
-    image: wazuh/wazuh-manager:4.14.4
-    depends_on:
-      - wazuh.indexer
-    ports:
-      - "1514:1514"
-      - "1515:1515"
-    volumes:
-      - wazuh_logs:/var/ossec/logs
-      - ./config/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
-
-  wazuh.dashboard:
-    image: wazuh/wazuh-dashboard:4.14.4
-    depends_on:
-      - wazuh.manager
-      - wazuh.indexer
-    ports:
-      - "443:5601"
+- name: Generate certificates if needed
+  type: shell
+  cmd: |
+    if [ ! -d /opt/wazuh/config/wazuh_indexer_ssl_certs ] || [ -z "$(ls -A /opt/wazuh/config/wazuh_indexer_ssl_certs 2>/dev/null)" ]; then
+      cd /opt/wazuh
+      docker compose -f generate-indexer-certs.yml run --rm generator
+    fi
 ```
+
+Cette étape est cruciale, car les fichiers internes suivants sont ensuite servis à chaque conteneur :
+
+- `root-ca.pem`
+- `wazuh.indexer.pem` / `wazuh.indexer-key.pem`
+- `wazuh.manager.pem` / `wazuh.manager-key.pem`
+- `wazuh.dashboard.pem` / `wazuh.dashboard-key.pem`
+- `admin.pem` / `admin-key.pem`
+
+Le rôle de cette couche TLS est double :
+
+1. sécuriser les flux entre `manager`, `indexer` et `dashboard` à l'intérieur du VPC ;
+2. empêcher la détection d'un cluster Wazuh à partir d'un simple point d'accès réseau externe, en respectant la logique de confinement du projet.
+
+### 5.2.3 Intégration réelle de Terraform + S3 + Docker dans le déploiement
+
+Le projet ne se contente pas de lancer un `docker-compose` localement. Le flux réel de déploiement est le suivant :
+
+1. Terraform crée les ressources AWS dans `/terraform/`.
+2. Les fichiers Docker et config Wazuh sont uploadés dans S3 via `aws_s3_object` dans `terraform/s3.tf`.
+3. Le playbook Wazuh (`playbooks/wazuh_manager.yml`) est exécuté via SSM sur l'instance `wazuh_server`.
+4. Le playbook télécharge les artefacts depuis S3 vers `/opt/wazuh`.
+5. Le conteneur Wazuh est démarré avec `docker compose -f /opt/wazuh/docker-compose.yml up -d`.
+
+Le flux est homogène avec les objets Terraform suivants :
+
+- `aws_s3_bucket.wazuh_assets`
+- `aws_s3_bucket_versioning.wazuh_assets`
+- `aws_s3_bucket_server_side_encryption_configuration.wazuh_assets`
+- `aws_s3_bucket_public_access_block.wazuh_assets`
+- `aws_s3_object.wazuh_docker_compose`
+- `aws_s3_object.wazuh_manager_conf`
+- `aws_s3_object.wazuh_indexer_config`
+- `aws_s3_object.wazuh_dashboard_config`
+
+Cette mécanique permet de garder les artefacts de configuration centralisés, versionnés et sécurisés, tout en évitant de dépendre d'un environnement local fragile pour la publication des fichiers de déploiement.
+
+### 5.2.4 Verrous techniques rencontrés lors du déploiement réel
+
+Le déploiement de cette pile dans un environnement d'intégration GitHub Codespaces / Docker-in-Docker a soulevé plusieurs blocages réels qui ont été explicitement traités dans le projet.
+
+#### Défi 1 : identification réseau des services interne
+
+Le manager et le dashboard tentaient de se connecter à l'indexer à partir d'un endpoint local ou d'une adresse IP statique. Cela ne fonctionnait pas correctement dans le contexte Docker, car chaque service est isolé dans son propre namespace réseau et le certificat TLS est généré pour des noms d'hôtes internes.
+
+**Correction appliquée** : la configuration du déploiement a été standardisée autour des noms `wazuh.indexer`, `wazuh.manager` et `wazuh.dashboard`, avec des fichiers de configuration et des certificats liés à ces identités logiques. Le comportement de résolution est ainsi aligné sur les contraintes de sécurité TLS et la logique de conteneurisation.
+
+#### Défi 2 : bootstrap Python/SSM + Docker Compose
+
+Les playbooks ne se contentent pas d'installer Docker ; ils doivent également créer les dossiers, télécharger les artefacts, alors générer les certificats et lancer les services dans le bon ordre. Le schéma réel du playbook montre une séquence très stricte : installation des dépendances → création des répertoires → téléchargement des fichiers S3 → génération des certificats → lancement du cluster → validation d'état.
+
+#### Défi 3 : validation de service après démarrage
+
+Le playbook `wazuh_manager.yml` termine par une validation explicite :
+
+```yaml
+- name: Verify Wazuh services are running
+  type: shell
+  cmd: |
+    cd /opt/wazuh
+    docker compose ps
+    echo "Waiting for services to stabilize..."
+    sleep 5
+    docker compose logs --tail 20 wazuh.manager | tail -10
+```
+
+Cette étape est cruciale, car le cluster Wazuh ne devient vraiment fonctionnel qu'après la publication des certificats, la fin du boot d'OpenSearch et la disponibilité du service API. La validation écrite dans le repository correspond à la réalité opérationnelle : le système est considéré "démarré" après vérification des conteneurs et non seulement après exécution du `docker compose up`.
+
+---
+
+## 5.3 Mise en place des agents {#53-agents}
+
+La collecte de télémétrie est la pierre angulaire de la supervision. Dans le projet, cette étape a été conçue de manière cohérente avec le plan de données AWS : un hôte victime dans le sous-réseau privé `10.0.2.0/24` envoie ses journaux vers le Wazuh Manager dans le sous-réseau `10.0.1.0/24` via le port `1514/TCP`.
+
+### 5.3.1 Agent Linux : installation et enrôlement réel
+
+Le playbook de déploiement `playbooks/victim_server.yml` installe d'abord les dépendances systèmes, puis ajoute le dépôt Wazuh et installe le paquet `wazuh-agent` :
+
+```yaml
+- name: Install Wazuh agent
+  type: package
+  packages:
+    - wazuh-agent
+```
+
+La configuration réseau de l'agent est ensuite rendue dynamique avec l'IP privée du Wazuh Manager, récupérée depuis le Terraform output `wazuh_instance_private_ip` :
+
+```yaml
+- name: Configure Wazuh agent manager connection
+  type: shell
+  cmd: |
+    if [ "{{ wazuh_manager_ip }}" = "" ]; then
+      echo "wazuh_manager_ip not provided"
+      exit 1
+    fi
+
+    sudo sed -i 's|MANAGER_IP|{{ wazuh_manager_ip }}|g' /var/ossec/etc/ossec.conf
+```
+
+Cette étape est particulièrement importante car elle garantit que l'agent sait précisément où joindre le manager sans dépendre d'une configuration locale statique. Une fois la configuration appliquée, le service `wazuh-agent` est activé et démarré :
+
+```yaml
+- name: Enable Wazuh agent service
+  type: service
+  name: wazuh-agent
+  state: started
+  enabled: true
+```
+
+### 5.3.2 Agent Linux : collecte de logs et détection de modifications de fichiers
+
+La mise en place du `ossec.conf` n'est pas un simple enrôlement minimal. L'agent Linux est préparé pour la surveillance des logs système et la détection d'intégrité de fichiers. L'architecture du projet cible explicitement les journaux suivants :
+
+- `/var/log/auth.log`
+- `/var/log/syslog`
+
+et la surveillance des répertoires sensibles :
+
+- `/etc`
+- `/bin`
+- `/sbin`
+- `/tmp`
+
+C'est précisément cette couche qui permet ensuite de détecter les manipulations de cron, la création de fichiers suspects ou la modification d'artefacts système lors des simulations d'attaque.
+
+### 5.3.3 Interopérabilité avec un nœud Windows et validation du SOC
+
+Même si le projet principal est centré sur une cible Linux, le design de la solution est volontairement multi-plateforme. L'architecture Terraform `victim_server` est une machine Ubuntu, mais le workflow de supervision est préparé pour l'intégration de nœuds additionnels, et la configuration de Wazuh est compatible avec les modules d'événements Windows. Les règles de surveillance peuvent être étendues à des événements tels que :
+
+- 4624 : connexion réussie
+- 4625 : connexion refusée
+- 4698 : création de tâche planifiée
+
+L'activation et la validation de l'agent sont confirmées par la commande de contrôle exécutée dans le stack :
+
+```bash
+/var/ossec/bin/manage_agents -l
+```
+
+Le dépôt et la logique de déploiement mettent en place le circuit complet : le manager reçoit, valide et consigne les événements, puis les transforme en alertes indexées pour la corrélation.
+
+---
+
+## 5.4 Intégration AWS (S3, ECR, SSM) {#54-integration-aws}
+
+L'intégration AWS ne constitue pas un simple ajout fonctionnel ; elle structure l'ensemble de la logique de déploiement, de stockage et de réponse. Les composants AWS utilisés dans le projet sont concrètement les suivants :
+
+- Amazon S3 pour le stockage des fichiers de configuration et des artefacts Docker
+- Amazon ECR pour les images de conteneurs applicatifs et victime
+- AWS Systems Manager pour le contrôle distant sans SSH
+- IAM pour les profils d'instance et les permissions associées
+
+### 5.4.1 Amazon S3 : stockage immuable des artefacts de déploiement
+
+Le dépôt possède une intégration Terraform détaillée dans `terraform/s3.tf`. Les ressources suivantes sont créées :
+
+- `aws_s3_bucket.wazuh_assets`
+- `aws_s3_bucket_versioning.wazuh_assets`
+- `aws_s3_bucket_server_side_encryption_configuration.wazuh_assets`
+- `aws_s3_bucket_public_access_block.wazuh_assets`
+
+Ensuite, les artefacts suivants sont uploadés dans le bucket :
+
+- `wazuh-docker/docker-compose.yml`
+- `wazuh-docker/generate-indexer-certs.yml`
+- `wazuh-docker/config/wazuh_cluster/wazuh_manager.conf`
+- `wazuh-docker/config/wazuh_indexer/wazuh.indexer.yml`
+- `wazuh-docker/config/wazuh_dashboard/opensearch_dashboards.yml`
+- `wazuh-docker/config/wazuh_dashboard/wazuh.yml`
+
+Le mode de stockage est volontairement critique pour le projet : il centralise les fichiers sans les rendre publics et garantit que l'instance Wazuh peut les récupérer de manière reproductible. Cette approache est particulièrement adaptée à un environnement DevSecOps, car elle évite le codage en dur des valeurs de configuration dans les images ou les scripts d'installation.
+
+### 5.4.2 Amazon ECR : gestion des images de service et de victime
+
+Le projet crée explicitement deux repositories ECR dans `terraform/ecr.tf` :
+
+- `aws_ecr_repository.victim_repo`
+- `aws_ecr_repository.manager_repo`
+
+Ces dépôts sont associés à des politiques de cycle de vie qui conservent uniquement les trois dernières images, afin d'éviter une croissance illimitée du stockage. Cela correspond à une vraie logique d'industrialisation du dépôt d'images, avec un contrôle de coût et un cycle de vie raisonnable, contrairement à une simple image Docker stockée localement.
+
+Le playbook `victim_server.yml` intègre ensuite le mécanisme réel d'authentification à ECR :
+
+```yaml
+- name: Login to ECR
+  type: shell
+  cmd: |
+    aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin $(echo "{{ ecr_victim_repository_url }}" | cut -d'/' -f1)
+```
+
+puis le pull de l'image victime :
+
+```yaml
+- name: Pull victim container image from ECR
+  type: shell
+  cmd: docker pull {{ ecr_victim_repository_url }}:latest
+```
+
+### 5.4.3 AWS Systems Manager (SSM) : mécanisme de contrôle principal
+
+Le cœur du modèle de contrôle du projet repose sur SSM et non sur SSH. Les services réels utilisés dans le code sont exposés dans `cloudsoc/aws/ssm.py` et comprennent :
+
+- `send_command()` : envoi d'un script via `AWS-RunShellScript`
+- `get_command_invocation()` : lecture du résultat de la commande
+- `wait_for_command()` : attente de la fin de l'exécution
+- `wait_for_instance()` : validation du statut de l'agent SSM
+
+Le rôle de ce composant est central dans le flux global :
+
+1. Terraform provisionne les instances EC2.
+2. Les instances installent l'agent SSM via le bootstrap Ubuntu.
+3. Le CLI `cloud-soc deploy` attend que les instances soient disponibles via SSM.
+4. Les playbooks sont exécutés par SSM sur la cible sans ouverture du port 22.
+5. Les résultats sont récupérés et vérifiés via l'API SSM.
+
+C'est cette mécanique qui permet au projet de sécuriser le plan de contrôle tout en gardant un modèle de résolution automatisée robuste.
+
+### 5.4.4 IAM : permissions minimales liées au SOC
+
+La sécurité du plan de contrôle est aussi assurée par les rôles IAM Terraform dans `terraform/iam.tf`. Les permissions accordées au rôle Wazuh concernent :
+
+- lecture des instances EC2 et groupes de sécurité ;
+- modification de security groups ;
+- lecture/écriture dans le bucket S3 du projet ;
+- accès aux repositories ECR du projet ;
+- permissions SSM gérées via `AmazonSSMManagedInstanceCore`.
+
+Le rôle de la victime, lui, permet explicitement :
+
+- récupération de jeton ECR pour télécharger des images privées ;
+- lecture des images du repository associé.
+
+Cette séparation est cohérente avec le principe de moindre privilège et s'aligne strictement sur la logique métier du projet.
+
+---
+
+## 5.5 Développement des scripts Python {#55-scripts-python}
+
+Le cœur logiciel du projet est implémenté dans `/cloudsoc/`, avec un ensemble de modules dédiés à l'orchestration Terraform, à la gestion SSM et à l'exécution des tâches de déploiement. Les fichiers réellement utilisés par le projet sont ceux-ci :
+
+- `/cloudsoc/main.py` : CLI principale `cloud-soc`
+- `/cloudsoc/deployment/executor.py` : moteur d'exécution YAML
+- `/cloudsoc/orchestrator.py` : orchestrateur Terraform / déploiement / Dashboard
+- `/cloudsoc/aws/ssm.py` : abstraction de la communication AWS Systems Manager
+
+### 5.5.1 `DeploymentTask` et la logique de rendu des playbooks
+
+Le composant technique réel dans `cloudsoc/deployment/executor.py` est `DeploymentTask`. Ce type encapsule chaque étape d'un playbook et implémente les actions suivantes :
+
+- `shell`
+- `command`
+- `package`
+- `directory`
+- `download`
+- `file`
+- `service`
+- `docker`
+
+Le mécanisme le plus important est la substitution dynamique de variables sous forme `{{ variable }}`. Par exemple, le playbook `wazuh_manager.yml` injecte `{{ s3_bucket_name }}`, `{{ s3_prefix }}` et `{{ ecr_victim_repository_url }}`. Le moteur lit ces valeurs depuis les outputs Terraform et les remplace automatiquement avant l'exécution de la commande.
+
+L'objet `DeploymentPlan` gère ensuite l'exécution séquentielle des tâches, en appui sur `DeploymentService.run_deployment()`. Cela permet d'unifier les scénarios de déploiement sur la base d'une logique YAML déclarative, sans réécrire des scripts de provisionnement spécifiques pour chaque composant.
+
+### 5.5.2 Exécution SSM distante et contraintes de sécurité
+
+Les playbooks ne sont pas exécutés directement depuis le poste local. Dans le flux réel du projet, `DeploymentOrchestrator.deploy_targets()` appelle `DeploymentService.run_deployment(..., ssm_service=self.ssm_service, instance_ids=[instance_id])`.
+
+À ce niveau, les tâches sont converties en commandes shell par la méthode `to_shell_commands()`, puis envoyées à AWS SSM via `send_command()` :
+
+```python
+command_id = ssm_service.send_command(
+    instance_ids=instance_ids,
+    commands=[script],
+    working_directory="/tmp",
+    timeout=3600,
+    document_name="AWS-RunShellScript"
+)
+```
+
+Ensuite, le code attend la fin de l'exécution avec `wait_for_command()`, puis vérifie le statut et le `return_code`.
+
+Cela correspond à l'architecture réelle du projet : le plan de contrôle passe par AWS, tandis que les machines cibles restent isolées dans le VPC private. Cette séparation est la clé de la sécurité du modèle.
+
+### 5.5.3 Orchestration Terraform, déploiement et tunnel Dashboard
+
+La logique réelle du projet est codée dans `cloudsoc/orchestrator.py` et présente trois couches :
+
+- `TerraformOrchestrator` : init/validate/plan/apply/destroy
+- `DeploymentOrchestrator` : orchestration des playbooks sur les instances SSM
+- `DashboardOrchestrator` : gestion du port-forwarding vers le Wazuh Dashboard via SSM
+
+Le tunnel Dashboard est mis en place avec la classe `SSMDashboardTunnelManager`, qui démarre une session `AWS-StartPortForwardingSessionToRemoteHost` et gère la persistance de l'état local dans `~/.cloud-soc/dashboard_tunnel.json`.
+
+Le code vérifie aussi le service distant avec `_monitor_dashboard_service()`, qui exécute sur l'instance un script SSM pour tester :
+
+- `curl -k https://127.0.0.1:443`
+- `curl https://127.0.0.1:9200`
+- `docker compose ps`
+- `docker compose logs` sur dashboard et indexer
+
+Cette validation est essentielle car elle distingue le simple démarrage du cluster de la disponibilité fonctionnelle de l'interface web. C'est ce type de contrôle qui rend la plateforme réellement exploitable par un opérateur SOC ou par un test automatisé.
+
+### 5.5.4 CLI réelle du projet
+
+La CLI principale est définie dans `cloudsoc/main.py` avec les commandes suivantes :
+
+- `cloud-soc apply` : provisionnement Terraform + validation de l'infra
+- `cloud-soc deploy` : déploiement des services via SSM/playbooks
+- `cloud-soc dashboard` : ouverture du tunnel vers le Dashboard Wazuh
+- `cloud-soc status` : contrôle des ressources et de la santé du système
+
+Le mode de déploiement réel du projet est donc bien un cycle en deux temps :
+
+1. `apply` pour provisionner l'infrastructure AWS ;
+2. `deploy` pour installer et démarrer les services sur les instances cibles.
+
+---
+
+## 5.6 Conclusion {#56-conclusion-chap5}
+
+Le chapitre 5 confirme que le projet n'est pas seulement un assemblage de composants Wazuh, Docker et AWS, mais une architecture automatisée, cohérente et exploitable en production. L'implémentation réelle repose sur une logique de cycle de vie entièrement pilotée par le code, depuis le provisionnement sur AWS jusqu'à la validation fonctionnelle du Dashboard Wazuh.
+
+Les éléments concrets démontrent cette rigueur :
+
+1. le provisionnement via Terraform dans `/terraform/` et les outputs `wazuh_instance_id`, `victim_instance_id`, `s3_bucket_name`, etc. ;
+2. le stockage des artefacts via S3 et la publication des images via ECR ;
+3. le déploiement des services par SSM à travers les playbooks `playbooks/wazuh_manager.yml` et `playbooks/victim_server.yml` ;
+4. la supervision réelle des agents Wazuh et la collecte de la télémétrie dans le plan de données VPC ;
+5. le moteur Python `DeploymentTask` + `DeploymentOrchestrator` + `DashboardOrchestrator` qui pilote l'entièreté du cycle de fonctionnement.
+
+Le levier déterminant du projet est la séparation nette entre le plan de contrôle (Python + SSM + AWS IAM) et le plan de données (VPC + Wazuh + agents). C'est cette séparation qui rend l'architecture robuste, testable et reproductible, et qui permet la mise en œuvre d'une boucle de détection et de réponse automatisée selon les principes d'un SOC moderne.
+
+---
